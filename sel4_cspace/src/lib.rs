@@ -17,6 +17,8 @@ pub mod capability;
 mod cte;
 mod structures;
 
+mod capops;
+
 /// 需要外部实现的接口
 pub mod deps;
 /// 暴露给外部的接口
