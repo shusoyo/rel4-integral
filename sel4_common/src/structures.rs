@@ -46,7 +46,7 @@ impl seL4_IPCBuffer {
 
 use crate::arch::config::PPTR_BASE;
 use core::{
-    ffi::CStr,
+    ffi::{c_char, CStr},
     fmt::{Debug, Display},
 };
 pub type pptr_t = usize;
@@ -96,7 +96,7 @@ impl paddr_t {
 
     #[inline]
     pub fn get_cstr(&self) -> &CStr {
-        unsafe { CStr::from_ptr(self.get_ptr::<i8>()) }
+        unsafe { CStr::from_ptr(self.get_ptr::<c_char>()) }
     }
 }
 

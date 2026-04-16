@@ -14,7 +14,21 @@ members = [
     "rel4-utils",
 ]
 
-exclude = ["rel4_config", "xtask"]
+default-members = [
+    "kernel",
+    "sel4_common",
+    "sel4_cspace",
+    "sel4_ipc",
+    "sel4_task",
+    "sel4_vspace",
+    "serial-frame",
+    "serial-impl/pl011",
+    "serial-impl/sbi",
+    "rel4-arch",
+    "rel4-utils",
+]
+
+exclude = ["rel4_config", "xtask", "dv", "tools/verus", "tools/verus-analyzer"]
 
 [profile.release]
 lto = true
@@ -23,6 +37,9 @@ lto = true
 aarch64-cpu = "9.4.0"
 rel4-utils = { path = "rel4-utils" }
 rel4-arch = { path = "rel4-arch" }
+
+[workspace.metadata.sel4_cspace]
+features = ["verify"]
 
 [patch.'https://github.com/reL4team2/serial-frame.git']
 serial-frame = { path = "serial-frame" }

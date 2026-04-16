@@ -25,6 +25,9 @@ pub mod structures;
 pub mod utils;
 pub mod vm_rights;
 
+#[cfg(feature = "verify")]
+pub mod verify_bridge;
+
 // pbf auto generated code
 pub mod shared_types_bf_gen {
     include!(concat!(env!("OUT_DIR"), "/pbf/shared_types.bf.rs"));

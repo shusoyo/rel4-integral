@@ -17,7 +17,9 @@ pub mod capability;
 mod cte;
 mod structures;
 
-mod capops;
+#[cfg(feature = "verify")]
+#[path = "../specs/lib.rs"]
+pub mod specs;
 
 /// 需要外部实现的接口
 pub mod deps;
