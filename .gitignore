@@ -36,3 +36,6 @@ kernel/src/arch/aarch64/gen/
 
 Makefile
 *.log
+
+# Local verification toolchain artifacts (never commit)
+tools/verus/
