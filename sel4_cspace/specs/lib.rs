@@ -1,13 +1,10 @@
-//! Verus-facing specifications for `sel4_cspace`.
-//!
-//! This file is wired in via `#[cfg(feature = "verify")] #[path = "../specs/lib.rs"]`
-//! from `src/lib.rs`, mirroring the ostd organization pattern.
+//! Specification-only definitions for sel4_cspace verification.
 
 #![allow(dead_code)]
 
 use vstd::prelude::*;
 
-/// Marker to verify the specs module is linked when `verify` is enabled.
+/// Marker to verify the specs module is linked when feature verus is enabled.
 pub const SPECS_MODULE_ENABLED: bool = true;
 
 verus! {

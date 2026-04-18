@@ -10,14 +10,19 @@ VERIFY_FEATURES="${VERIFY_FEATURES:-verify}"
 VERIFY_MAX_ERRORS="${VERIFY_MAX_ERRORS:-1}"
 PLATFORM="${PLATFORM:-spike}"
 MARCOS="${MARCOS:-KERNEL_STACK_BITS=12 FASTPATH=true HAVE_FPU=true RISCV_EXT_D=true}"
-
-CARGO_VERUS="$ROOT_DIR/tools/verus/source/target-verus/release/cargo-verus"
+VERUS_RELEASE_DIR="${VERUS_RELEASE_DIR:-$ROOT_DIR/tools/verus/release}"
+CARGO_VERUS="${CARGO_VERUS:-$VERUS_RELEASE_DIR/cargo-verus}"
 
 if [[ ! -x "$CARGO_VERUS" ]]; then
     echo "[verify-official][error] missing cargo-verus at $CARGO_VERUS" >&2
+    echo "[verify-official][hint] expected release tools under $VERUS_RELEASE_DIR" >&2
     echo "[verify-official][hint] run: ./tools/bootstrap-verus-release.sh" >&2
     exit 1
 fi
+
+echo "[verify-official] cargo-verus: $CARGO_VERUS"
+echo "[verify-official] package=$VERIFY_PACKAGE features=$VERIFY_FEATURES target=$VERIFY_TARGET jobs=$VERIFY_JOBS"
+echo "[verify-official] if output is delayed, Cargo may be waiting on lock /usr/local/cargo/.package-cache"
 
 cd "$ROOT_DIR"
 

@@ -17,7 +17,6 @@ pub mod capability;
 mod cte;
 mod structures;
 
-#[cfg(feature = "verify")]
 #[path = "../specs/lib.rs"]
 pub mod specs;
 

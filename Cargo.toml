@@ -40,6 +40,8 @@ rel4-arch = { path = "rel4-arch" }
 
 [workspace.metadata.sel4_cspace]
 features = ["verify"]
+build_features = ["verus"]
+verify_features = ["verify"]
 
 [patch.'https://github.com/reL4team2/serial-frame.git']
 serial-frame = { path = "serial-frame" }

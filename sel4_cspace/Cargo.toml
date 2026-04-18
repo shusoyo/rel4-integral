@@ -5,13 +5,25 @@ edition = "2021"
 
 [dependencies]
 log = "0.4"
-sel4_common = { git = "https://github.com/reL4team2/sel4_common.git", branch = "master" }
+sel4_common = { path = "../sel4_common" }
 rel4-utils = { workspace = true }
+vstd = { git = "https://github.com/verus-lang/verus.git", default-features = false, optional = true }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
 
 [features]
+default = ["verus"]
 kernel_mcs = []
 enable_smc = []
 hypervisor = []
+verus = ["dep:vstd"]
+verify = ["verus"]
+
+[package.metadata.verus]
+path = "src/lib.rs"
+verify = true
+
+[package.metadata.rel4.verification]
+package = "sel4_cspace"
+features = ["verify"]
