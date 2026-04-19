@@ -432,6 +432,27 @@ pub open spec fn slots_unchanged_except(
 		old_state.slots.dom().contains(slot) && !changed.contains(slot) ==> new_state.slots[slot] == old_state.slots[slot]
 }
 
+pub proof fn lemma_slots_unchanged_except_preserves_slot_data(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	changed: Set<SlotId>,
+	slot: SlotId,
+)
+	requires
+		slots_unchanged_except(old_state, new_state, changed),
+		old_state.has_slot(slot),
+		!changed.contains(slot),
+	ensures
+		new_state.has_slot(slot),
+		new_state.slot_entry(slot) == old_state.slot_entry(slot),
+		new_state.slot_cap(slot) == old_state.slot_cap(slot),
+		new_state.slot_empty(slot) == old_state.slot_empty(slot),
+{
+	assert(old_state.slots.dom().contains(slot));
+	assert(new_state.slots.dom().contains(slot));
+	assert(new_state.slots[slot] == old_state.slots[slot]);
+}
+
 pub proof fn abstract_cspace_smoke_check() {
 	let no_rights = Rights {
 		can_read: false,
