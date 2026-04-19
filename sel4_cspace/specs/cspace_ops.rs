@@ -544,11 +544,25 @@ pub ghost enum ResolveAddressBitsStatusSpec {
 	LookupFault,
 }
 
+pub ghost enum ResolveAddressBitsFaultSpec {
+	InvalidRoot,
+	GuardMismatch {
+		bits_left: int,
+		guard_found: int,
+		guard_size: int,
+	},
+	DepthMismatch {
+		bits_left: int,
+		bits_found: int,
+	},
+}
+
 #[verifier::ext_equal]
 pub ghost struct ResolveAddressBitsResultSpec {
 	pub status: ResolveAddressBitsStatusSpec,
 	pub slot: Option<SlotId>,
 	pub bits_remaining: int,
+	pub fault: Option<ResolveAddressBitsFaultSpec>,
 }
 
 pub open spec fn spec_pow2(bits: nat) -> int
@@ -578,6 +592,25 @@ pub open spec fn spec_cnode_level_bits(cnode_cap: CapSpec) -> int
 	cnode_cap.cnode->Some_0.guard_size + cnode_cap.cnode->Some_0.radix_bits
 }
 
+pub open spec fn spec_resolve_guard_value(
+	cnode_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+) -> int
+	recommends
+		cnode_cap.kind == CapKind::CNodeCap,
+		cnode_cap.cnode is Some,
+		0 <= cap_ptr,
+		0 <= bits,
+{
+	let guard_bits = cnode_cap.cnode->Some_0.guard_size;
+	if guard_bits <= bits {
+		spec_extract_bits(cap_ptr, bits - guard_bits, guard_bits)
+	} else {
+		0
+	}
+}
+
 pub open spec fn spec_resolve_guard_matches(
 	cnode_cap: CapSpec,
 	cap_ptr: int,
@@ -591,7 +624,7 @@ pub open spec fn spec_resolve_guard_matches(
 {
 	let guard_bits = cnode_cap.cnode->Some_0.guard_size;
 	if guard_bits <= bits {
-		spec_extract_bits(cap_ptr, bits - guard_bits, guard_bits) == cnode_cap.cnode->Some_0.guard
+		spec_resolve_guard_value(cnode_cap, cap_ptr, bits) == cnode_cap.cnode->Some_0.guard
 	} else {
 		false
 	}
@@ -619,6 +652,34 @@ pub open spec fn spec_resolve_address_bits_next_slot(
 	}
 }
 
+/// Stage C bridge from the finite `cnode_lookup` map to l4v's total `locateSlotCap`.
+///
+/// We currently keep the lookup table finite in the abstract model, so `resolve_address_bits`
+/// assumes every valid offset inside any visible CNode maps to some slot.
+pub open spec fn spec_cnode_cap_lookup_total(
+	state: CSpaceState,
+	cnode_cap: CapSpec,
+) -> bool
+	recommends
+		cnode_cap.kind == CapKind::CNodeCap,
+		cnode_cap.cnode is Some,
+		cnode_cap.object is Some,
+		0 <= cnode_cap.cnode->Some_0.radix_bits,
+{
+	forall|offset: int|
+		0 <= offset < spec_pow2(cnode_cap.cnode->Some_0.radix_bits as nat) ==>
+			state.cnode_cap_slot_at(cnode_cap, offset) is Some
+}
+
+pub open spec fn spec_cspace_lookup_total(state: CSpaceState) -> bool {
+	forall|slot: SlotId|
+		state.has_slot(slot)
+		&& state.slot_cap(slot).kind == CapKind::CNodeCap
+		&& state.slot_cap(slot).cnode is Some
+		&& state.slot_cap(slot).object is Some
+		==> spec_cnode_cap_lookup_total(state, state.slot_cap(slot))
+}
+
 /// Structural Stage C contract for `resolve_address_bits`.
 ///
 /// This already matches the l4v/Rust control flow on:
@@ -626,8 +687,6 @@ pub open spec fn spec_resolve_address_bits_next_slot(
 /// 2. exact guard matching against the unresolved prefix of `cap_ptr`;
 /// 3. offset-based slot lookup inside the current CNode;
 /// 4. either consuming all bits, or stopping early on the first non-CNode capability.
-///
-/// We still leave the concrete fault taxonomy abstracted into a single `LookupFault`.
 pub open spec fn spec_resolve_address_bits_success(
 	state: CSpaceState,
 	cnode_cap: CapSpec,
@@ -682,8 +741,15 @@ pub open spec fn spec_resolve_address_bits_pre(
 	bits: int,
 ) -> bool {
 	&&& state.wf()
+	&&& spec_cspace_lookup_total(state)
 	&&& 0 <= cap_ptr
 	&&& 0 <= bits <= cspace_word_bits()
+	&&& (root_cap.kind == CapKind::CNodeCap ==> {
+		&&& root_cap.cnode is Some
+		&&& root_cap.object is Some
+		&&& 0 < spec_cnode_level_bits(root_cap)
+		&&& spec_cnode_cap_lookup_total(state, root_cap)
+	})
 }
 
 pub open spec fn spec_resolve_address_bits_fault(
@@ -696,14 +762,57 @@ pub open spec fn spec_resolve_address_bits_fault(
 	recommends
 		0 <= cap_ptr,
 		0 <= bits,
+	decreases bits,
 {
-	&&& result.status == ResolveAddressBitsStatusSpec::LookupFault
-	&&& result.slot is None
-	&&& result.bits_remaining == bits
-	&&& !(exists|slot: SlotId, bits_left: int|
-		state.has_slot(slot)
-		&& 0 <= bits_left <= bits
-		&& spec_resolve_address_bits_success(state, root_cap, cap_ptr, bits, slot, bits_left))
+	if !(root_cap.kind == CapKind::CNodeCap
+		&& root_cap.cnode is Some
+		&& root_cap.object is Some) {
+		&&& result.status == ResolveAddressBitsStatusSpec::LookupFault
+		&&& result.slot is None
+		&&& result.bits_remaining == bits
+		&&& result.fault == Some(ResolveAddressBitsFaultSpec::InvalidRoot)
+	} else {
+		let level_bits = spec_cnode_level_bits(root_cap);
+		let guard_bits = root_cap.cnode->Some_0.guard_size;
+		if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+			&&& result.status == ResolveAddressBitsStatusSpec::LookupFault
+			&&& result.slot is None
+			&&& result.bits_remaining == bits
+			&&& result.fault == Some(ResolveAddressBitsFaultSpec::GuardMismatch {
+				bits_left: bits,
+				guard_found: root_cap.cnode->Some_0.guard,
+				guard_size: guard_bits,
+			})
+		} else if !(level_bits <= bits) {
+			&&& result.status == ResolveAddressBitsStatusSpec::LookupFault
+			&&& result.slot is None
+			&&& result.bits_remaining == bits
+			&&& result.fault == Some(ResolveAddressBitsFaultSpec::DepthMismatch {
+				bits_left: bits,
+				bits_found: level_bits,
+			})
+		} else {
+			let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+			if !(level_bits > 0 && next_slot is Some) {
+				false
+			} else {
+				let next = next_slot.unwrap();
+				if !(state.has_slot(next)) {
+					false
+				} else if bits == level_bits {
+					false
+				} else {
+					let remaining = bits - level_bits;
+					let next_cap = state.slot_cap(next);
+					if next_cap.kind == CapKind::CNodeCap {
+						spec_resolve_address_bits_fault(state, next_cap, cap_ptr, remaining, result)
+					} else {
+						false
+					}
+				}
+			}
+		}
+	}
 }
 
 pub open spec fn spec_resolve_address_bits_post(
@@ -719,6 +828,7 @@ pub open spec fn spec_resolve_address_bits_post(
 {
 	if result.status == ResolveAddressBitsStatusSpec::Success {
 		&&& result.slot is Some
+		&&& result.fault is None
 		&&& state.has_slot(result.slot.unwrap())
 		&&& 0 <= result.bits_remaining <= bits
 		&&& spec_resolve_address_bits_success(
@@ -1279,7 +1389,7 @@ pub proof fn cte_swap_smoke_check() {
 		assert(spec_cte_swap_mdb_shape(old_state, swapped_state, 3int, 4int));
 }
 
-pub proof fn resolve_address_bits_smoke_check() {
+	pub proof fn resolve_address_bits_smoke_check() {
 		let no_rights = Rights {
 			can_read: false,
 			can_write: false,
@@ -1345,6 +1455,16 @@ pub proof fn resolve_address_bits_smoke_check() {
 			untyped: None,
 		};
 
+		let null_cap = CapSpec {
+			kind: CapKind::NullCap,
+			object: None,
+			region_id: None,
+			rights: no_rights,
+			badge: None,
+			cnode: None,
+			untyped: None,
+		};
+
 		let state = CSpaceState {
 			slots: map![
 				1int => SlotEntrySpec {
@@ -1367,48 +1487,134 @@ pub proof fn resolve_address_bits_smoke_check() {
 					mdb_next: None,
 					mdb_revocable: false,
 					mdb_first_badged: false,
+				},
+				4int => SlotEntrySpec {
+					cap: null_cap,
+					mdb_prev: None,
+					mdb_next: None,
+					mdb_revocable: false,
+					mdb_first_badged: false,
+				},
+				5int => SlotEntrySpec {
+					cap: null_cap,
+					mdb_prev: None,
+					mdb_next: None,
+					mdb_revocable: false,
+					mdb_first_badged: false,
 				}
 			],
 			cnode_slots: map![
-				root_cnode => set![2int],
-				child_cnode => set![3int]
+				root_cnode => set![2int, 4int],
+				child_cnode => set![3int, 5int]
 			],
 			cnode_lookup: map![
 				root_cnode => map![
-					0int => 2int
+					0int => 2int,
+					1int => 4int
 				],
 				child_cnode => map![
-					0int => 3int
+					0int => 3int,
+					1int => 5int
 				]
 			],
 			roots: set![1int],
 		};
 
 		let cap_ptr = 0int;
+		let shallow_cap_ptr = 4int;
+		let guard_mismatch_cap_ptr = 8int;
 
 		let success_result = ResolveAddressBitsResultSpec {
 			status: ResolveAddressBitsStatusSpec::Success,
 			slot: Some(3int),
 			bits_remaining: 0,
+			fault: None,
+		};
+		let shallow_success_result = ResolveAddressBitsResultSpec {
+			status: ResolveAddressBitsStatusSpec::Success,
+			slot: Some(4int),
+			bits_remaining: 2,
+			fault: None,
 		};
 		let invalid_root_result = ResolveAddressBitsResultSpec {
 			status: ResolveAddressBitsStatusSpec::LookupFault,
 			slot: None,
 			bits_remaining: 4,
+			fault: Some(ResolveAddressBitsFaultSpec::InvalidRoot),
+		};
+		let guard_mismatch_result = ResolveAddressBitsResultSpec {
+			status: ResolveAddressBitsStatusSpec::LookupFault,
+			slot: None,
+			bits_remaining: 4,
+			fault: Some(ResolveAddressBitsFaultSpec::GuardMismatch {
+				bits_left: 4,
+				guard_found: 0,
+				guard_size: 1,
+			}),
+		};
+		let depth_mismatch_result = ResolveAddressBitsResultSpec {
+			status: ResolveAddressBitsStatusSpec::LookupFault,
+			slot: None,
+			bits_remaining: 1,
+			fault: Some(ResolveAddressBitsFaultSpec::DepthMismatch {
+				bits_left: 1,
+				bits_found: 2,
+			}),
 		};
 
 		assert(spec_pow2(1nat) == 2);
 		assert(spec_pow2(2nat) == 4);
 		assert(spec_cnode_level_bits(root_cap) == 2);
 		assert(spec_cnode_level_bits(child_cap) == 2);
+		assert(spec_resolve_guard_value(root_cap, cap_ptr, 4) == 0);
+		assert(spec_resolve_guard_value(root_cap, guard_mismatch_cap_ptr, 4) == 1) by {
+			assert(spec_extract_bits(8int, 3, 1) == 1) by (compute_only);
+		}
 		assert(spec_resolve_guard_matches(root_cap, cap_ptr, 4));
 		assert(spec_resolve_guard_matches(child_cap, cap_ptr, 2));
+		assert(!spec_resolve_guard_matches(root_cap, guard_mismatch_cap_ptr, 4));
 		assert(spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, 4) == Some(2int));
+		assert(state.cnode_slot_at(root_cnode, 1int) == Some(4int)) by {
+			assert(state.cnode_lookup[root_cnode].dom().contains(1int));
+			assert(state.cnode_lookup[root_cnode][1int] == 4int);
+		}
+		assert(spec_resolve_address_bits_next_slot(state, root_cap, shallow_cap_ptr, 4) == Some(4int)) by {
+			assert(spec_extract_bits(4int, 2, 1) == 1) by (compute_only);
+			assert(state.cnode_slot_at(root_cnode, 1int) == Some(4int));
+		}
 		assert(spec_resolve_address_bits_next_slot(state, child_cap, cap_ptr, 2) == Some(3int));
 		assert(success_result.slot == Some(3int));
 		assert(success_result.bits_remaining == 0);
+		assert(spec_resolve_address_bits_success(state, child_cap, cap_ptr, 2, 3int, 0)) by {
+			assert(state.has_slot(3int));
+			assert(spec_resolve_address_bits_next_slot(state, child_cap, cap_ptr, 2) == Some(3int));
+		}
+		assert(spec_resolve_address_bits_success(state, root_cap, cap_ptr, 4, 3int, 0)) by {
+			assert(state.has_slot(2int));
+			assert(state.slot_cap(2int) == child_cap);
+			assert(spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, 4) == Some(2int));
+			assert(spec_resolve_address_bits_success(state, child_cap, cap_ptr, 2, 3int, 0));
+		}
+		assert(spec_resolve_address_bits_success(state, root_cap, shallow_cap_ptr, 4, 4int, 2)) by {
+			assert(state.has_slot(4int));
+			assert(state.slot_cap(4int) == null_cap);
+			assert(spec_resolve_address_bits_next_slot(state, root_cap, shallow_cap_ptr, 4) == Some(4int));
+		}
+		assert(spec_resolve_address_bits_fault(state, child_cap, cap_ptr, 1, depth_mismatch_result)) by {
+			assert(spec_resolve_guard_matches(child_cap, cap_ptr, 1));
+			assert(spec_cnode_level_bits(child_cap) == 2);
+		}
+		assert(spec_resolve_address_bits_post(state, root_cap, cap_ptr, 4, success_result));
+		assert(spec_resolve_address_bits_post(state, root_cap, shallow_cap_ptr, 4, shallow_success_result));
 		assert(spec_resolve_address_bits_fault(state, leaf_cap, cap_ptr, 4, invalid_root_result));
-}
+		assert(spec_resolve_address_bits_fault(state, root_cap, guard_mismatch_cap_ptr, 4, guard_mismatch_result));
+		assert(spec_resolve_address_bits_fault(state, root_cap, cap_ptr, 3, depth_mismatch_result)) by {
+			assert(state.has_slot(2int));
+			assert(state.slot_cap(2int) == child_cap);
+			assert(spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, 3) == Some(2int));
+			assert(spec_resolve_address_bits_fault(state, child_cap, cap_ptr, 1, depth_mismatch_result));
+		}
+	}
 
 pub proof fn cspace_ops_smoke_check() {
 		cte_insert_smoke_check();
