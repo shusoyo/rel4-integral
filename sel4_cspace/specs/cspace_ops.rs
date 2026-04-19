@@ -164,6 +164,7 @@ pub open spec fn spec_cte_insert_post(
 		&&& new_state.wf()
 		&&& new_state.roots =~= old_state.roots
 		&&& new_state.cnode_slots =~= old_state.cnode_slots
+		&&& new_state.cnode_lookup =~= old_state.cnode_lookup
 		&&& slots_unchanged_except(old_state, new_state, changed)
 		&&& spec_set_untyped_cap_as_full_effect(
 			old_state.slot_cap(src),
@@ -325,6 +326,7 @@ pub open spec fn spec_cte_move_post(
 		&&& new_state.wf()
 		&&& new_state.roots =~= old_state.roots
 		&&& new_state.cnode_slots =~= old_state.cnode_slots
+		&&& new_state.cnode_lookup =~= old_state.cnode_lookup
 		&&& slots_unchanged_except(old_state, new_state, changed)
 		&&& new_state.slot_cap(dest) == new_cap
 		&&& new_state.slot_empty(src)
@@ -512,6 +514,7 @@ pub open spec fn spec_cte_swap_post(
 		&&& new_state.wf()
 		&&& new_state.roots =~= old_state.roots
 		&&& new_state.cnode_slots =~= old_state.cnode_slots
+		&&& new_state.cnode_lookup =~= old_state.cnode_lookup
 		&&& slots_unchanged_except(old_state, new_state, changed)
 		&&& new_state.slot_cap(slot1) == cap2
 		&&& new_state.slot_cap(slot2) == cap1

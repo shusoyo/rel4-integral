@@ -272,9 +272,13 @@ impl CSpaceState {
 	{
 		if self.slot_cap(slot).kind == CapKind::CNodeCap
 			&& self.slot_cap(slot).object.is_Some()
-			&& self.cnode_slots.dom().contains(self.slot_cap(slot).object.unwrap())
+			&& self.cnode_lookup.dom().contains(self.slot_cap(slot).object.unwrap())
 		{
-			self.cnode_slots[self.slot_cap(slot).object.unwrap()]
+			let obj = self.slot_cap(slot).object.unwrap();
+			Set::new(|dst: SlotId|
+				exists|offset: int|
+					self.cnode_lookup[obj].dom().contains(offset)
+					&& self.cnode_lookup[obj][offset] == dst)
 		} else {
 			Set::empty()
 		}
@@ -377,10 +381,10 @@ impl CSpaceState {
 	}
 
 	pub open spec fn cnode_lookup_wf(self) -> bool {
-		forall|obj: ObjectRef|
+		&&& self.cnode_slots.dom() =~= self.cnode_lookup.dom()
+		&&& forall|obj: ObjectRef|
 			self.cnode_lookup.dom().contains(obj) ==> {
 				&&& obj.kind == ObjectKind::CNode
-				&&& self.cnode_slots.dom().contains(obj)
 				&&& forall|offset: int|
 					self.cnode_lookup[obj].dom().contains(offset) ==> {
 						let slot = self.cnode_lookup[obj][offset];
@@ -517,7 +521,7 @@ pub proof fn abstract_cspace_smoke_check() {
 			}
 		],
 		cnode_slots: map![
-			root_cnode => set![1int, 2int, 3int]
+			root_cnode => set![2int, 3int]
 		],
 		cnode_lookup: map![
 			root_cnode => map![
@@ -532,9 +536,16 @@ pub proof fn abstract_cspace_smoke_check() {
 	assert(valid_cap(ep_parent_cap));
 	assert(valid_cap(ep_child_cap));
 	assert(state.wf());
-	assert(state.cspace_edge(1int, 2int));
-	assert(state.cspace_edge(1int, 3int));
 	assert(state.cnode_cap_slot_at(root_cap, 0int) == Some(2int));
+	assert(state.cnode_cap_slot_at(root_cap, 1int) == Some(3int));
+	assert(state.cspace_edge(1int, 2int)) by {
+		assert(state.cnode_lookup[root_cnode].dom().contains(0int));
+		assert(state.cnode_lookup[root_cnode][0int] == 2int);
+	}
+	assert(state.cspace_edge(1int, 3int)) by {
+		assert(state.cnode_lookup[root_cnode].dom().contains(1int));
+		assert(state.cnode_lookup[root_cnode][1int] == 3int);
+	}
 	assert(state.reachable_slot_from(1int, 3int, 1));
 	assert(state.immediate_derived(2int, 3int));
 	assert(!state.is_final_cap(2int));
