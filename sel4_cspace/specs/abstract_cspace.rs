@@ -139,39 +139,40 @@ pub open spec fn valid_cap(cap: CapSpec) -> bool {
 	&&& rights_compatible_with_kind(cap)
 	&&& match cap.kind {
 		CapKind::NullCap => {
-			&&& cap.object.is_None()
-			&&& cap.region_id.is_None()
-			&&& cap.badge.is_None()
-			&&& cap.cnode.is_None()
-			&&& cap.untyped.is_None()
+			&&& cap.object is None
+			&&& cap.region_id is None
+			&&& cap.badge is None
+			&&& cap.cnode is None
+			&&& cap.untyped is None
 		}
 		CapKind::IRQControlCap => {
-			&&& cap.object.is_None()
-			&&& cap.cnode.is_None()
-			&&& cap.untyped.is_None()
+			&&& cap.object is None
+			&&& cap.cnode is None
+			&&& cap.untyped is None
 		}
 		CapKind::CNodeCap => {
-			&&& cap.object.is_Some()
+			&&& cap.object is Some
 			&&& object_kind_matches_cap_kind(cap.kind, cap.object.unwrap().kind)
-			&&& cap.cnode.is_Some()
-			&&& cap.untyped.is_None()
+			&&& cap.cnode is Some
+			&&& cap.untyped is None
 			&&& 0 <= cap.cnode.unwrap().radix_bits
 			&&& 0 <= cap.cnode.unwrap().guard_size
+			&&& 0 < cap.cnode.unwrap().guard_size + cap.cnode.unwrap().radix_bits
 			&&& cap.cnode.unwrap().guard_size + cap.cnode.unwrap().radix_bits <= cspace_word_bits()
 		}
 		CapKind::UntypedCap => {
-			&&& cap.object.is_Some()
+			&&& cap.object is Some
 			&&& object_kind_matches_cap_kind(cap.kind, cap.object.unwrap().kind)
-			&&& cap.untyped.is_Some()
-			&&& cap.cnode.is_None()
+			&&& cap.untyped is Some
+			&&& cap.cnode is None
 			&&& 0 <= cap.untyped.unwrap().block_size_bits
 			&&& 0 <= cap.untyped.unwrap().free_index <= cap.untyped.unwrap().block_size_bits
 		}
 		_ => {
-			&&& cap.object.is_Some()
+			&&& cap.object is Some
 			&&& object_kind_matches_cap_kind(cap.kind, cap.object.unwrap().kind)
-			&&& cap.cnode.is_None()
-			&&& cap.untyped.is_None()
+			&&& cap.cnode is None
+			&&& cap.untyped is None
 		}
 	}
 }
@@ -211,8 +212,8 @@ impl CSpaceState {
 			self.has_slot(left),
 			self.has_slot(right),
 	{
-		self.slot_cap(left).object.is_Some()
-		&& self.slot_cap(right).object.is_Some()
+		self.slot_cap(left).object is Some
+		&& self.slot_cap(right).object is Some
 		&& self.slot_cap(left).object == self.slot_cap(right).object
 	}
 
@@ -221,8 +222,8 @@ impl CSpaceState {
 			self.has_slot(left),
 			self.has_slot(right),
 	{
-		self.slot_cap(left).region_id.is_Some()
-		&& self.slot_cap(right).region_id.is_Some()
+		self.slot_cap(left).region_id is Some
+		&& self.slot_cap(right).region_id is Some
 		&& self.slot_cap(left).region_id == self.slot_cap(right).region_id
 	}
 
@@ -250,13 +251,13 @@ impl CSpaceState {
 		recommends
 			self.has_slot(slot),
 	{
-		let prev_same_obj = if self.slot_entry(slot).mdb_prev.is_Some() {
+		let prev_same_obj = if self.slot_entry(slot).mdb_prev is Some {
 			self.same_object(self.slot_entry(slot).mdb_prev.unwrap(), slot)
 		} else {
 			false
 		};
 
-		let next_same_obj = if self.slot_entry(slot).mdb_next.is_Some() {
+		let next_same_obj = if self.slot_entry(slot).mdb_next is Some {
 			self.same_object(slot, self.slot_entry(slot).mdb_next.unwrap())
 		} else {
 			false
@@ -269,19 +270,19 @@ impl CSpaceState {
 	pub open spec fn cnode_targets(self, slot: SlotId) -> Set<SlotId>
 		recommends
 			self.has_slot(slot),
-	{
-		if self.slot_cap(slot).kind == CapKind::CNodeCap
-			&& self.slot_cap(slot).object.is_Some()
-			&& self.cnode_lookup.dom().contains(self.slot_cap(slot).object.unwrap())
 		{
-			let obj = self.slot_cap(slot).object.unwrap();
-			Set::new(|dst: SlotId|
-				exists|offset: int|
-					self.cnode_lookup[obj].dom().contains(offset)
-					&& self.cnode_lookup[obj][offset] == dst)
-		} else {
-			Set::empty()
-		}
+			if self.slot_cap(slot).kind == CapKind::CNodeCap
+				&& self.slot_cap(slot).object is Some
+				&& self.cnode_lookup.dom().contains(self.slot_cap(slot).object.unwrap())
+			{
+				let obj = self.slot_cap(slot).object.unwrap();
+				Set::new(|dst: SlotId|
+					exists|offset: int| #![auto]
+						self.cnode_lookup[obj].dom().contains(offset)
+						&& self.cnode_lookup[obj][offset] == dst)
+			} else {
+				Set::empty()
+			}
 	}
 
 	pub open spec fn cspace_edge(self, src: SlotId, dst: SlotId) -> bool
@@ -301,7 +302,7 @@ impl CSpaceState {
 	}
 
 	pub open spec fn cnode_cap_slot_at(self, cap: CapSpec, offset: int) -> Option<SlotId> {
-		if cap.kind == CapKind::CNodeCap && cap.object.is_Some() {
+		if cap.kind == CapKind::CNodeCap && cap.object is Some {
 			self.cnode_slot_at(cap.object.unwrap(), offset)
 		} else {
 			None
@@ -313,18 +314,18 @@ impl CSpaceState {
 			self.has_slot(root),
 			self.has_slot(target),
 		decreases fuel,
-	{
-		if fuel == 0 {
-			root == target
-		} else {
-			root == target
-			|| self.cspace_edge(root, target)
-			|| exists|mid: SlotId|
-				self.has_slot(mid)
-				&& self.cspace_edge(root, mid)
-				&& self.reachable_slot_from(mid, target, (fuel - 1) as nat)
+		{
+			if fuel == 0 {
+				root == target
+			} else {
+				root == target
+				|| self.cspace_edge(root, target)
+				|| exists|mid: SlotId| #![auto]
+					self.has_slot(mid)
+					&& self.cspace_edge(root, mid)
+					&& self.reachable_slot_from(mid, target, (fuel - 1) as nat)
+			}
 		}
-	}
 
 	pub open spec fn valid_slot_entry(self, slot: SlotId) -> bool
 		recommends
@@ -332,30 +333,30 @@ impl CSpaceState {
 	{
 		let entry = self.slot_entry(slot);
 		&&& valid_cap(entry.cap)
-		&&& entry.mdb_prev.is_Some() ==> self.has_slot(entry.mdb_prev.unwrap())
-		&&& entry.mdb_next.is_Some() ==> self.has_slot(entry.mdb_next.unwrap())
+		&&& entry.mdb_prev is Some ==> self.has_slot(entry.mdb_prev.unwrap())
+		&&& entry.mdb_next is Some ==> self.has_slot(entry.mdb_next.unwrap())
 	}
 
 	pub open spec fn valid_slots(self) -> bool {
-		forall|slot: SlotId| self.has_slot(slot) ==> self.valid_slot_entry(slot)
+		forall|slot: SlotId| #![auto] self.has_slot(slot) ==> self.valid_slot_entry(slot)
 	}
 
 	pub open spec fn mdb_prev_next_consistent(self) -> bool {
-		forall|slot: SlotId|
+		forall|slot: SlotId| #![auto]
 			self.has_slot(slot) ==> {
-				&&& self.slot_entry(slot).mdb_prev.is_Some() ==>
+				&&& self.slot_entry(slot).mdb_prev is Some ==>
 					self.slot_entry(self.slot_entry(slot).mdb_prev.unwrap()).mdb_next == Some(slot)
-				&&& self.slot_entry(slot).mdb_next.is_Some() ==>
+				&&& self.slot_entry(slot).mdb_next is Some ==>
 					self.slot_entry(self.slot_entry(slot).mdb_next.unwrap()).mdb_prev == Some(slot)
 			}
 	}
 
 	pub open spec fn badge_derivation_wf(self) -> bool {
-		forall|parent: SlotId, child: SlotId|
+		forall|parent: SlotId, child: SlotId| #![auto]
 			self.has_slot(parent) && self.has_slot(child) && self.immediate_derived(parent, child) ==> {
 				if self.slot_cap(parent).kind == CapKind::EndpointCap
 					|| self.slot_cap(parent).kind == CapKind::NotificationCap {
-					if self.slot_cap(parent).badge.is_Some() && self.slot_cap(parent).badge.unwrap() != 0 {
+					if self.slot_cap(parent).badge is Some && self.slot_cap(parent).badge.unwrap() != 0 {
 						&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
 						&&& !self.slot_entry(child).mdb_first_badged
 					} else {
@@ -368,12 +369,13 @@ impl CSpaceState {
 	}
 
 	pub open spec fn cnode_slots_wf(self) -> bool {
-		&&& forall|obj: ObjectRef|
+		&&& forall|obj: ObjectRef| #![auto]
 			self.cnode_slots.dom().contains(obj) ==> {
 				&&& obj.kind == ObjectKind::CNode
-				&&& forall|slot: SlotId| self.cnode_slots[obj].contains(slot) ==> self.has_slot(slot)
+				&&& forall|slot: SlotId| #![auto]
+					self.cnode_slots[obj].contains(slot) ==> self.has_slot(slot)
 			}
-		&&& forall|obj1: ObjectRef, obj2: ObjectRef, slot: SlotId|
+		&&& forall|obj1: ObjectRef, obj2: ObjectRef, slot: SlotId| #![auto]
 			self.cnode_slots.dom().contains(obj1)
 			&& self.cnode_slots.dom().contains(obj2)
 			&& self.cnode_slots[obj1].contains(slot)
@@ -382,10 +384,10 @@ impl CSpaceState {
 
 	pub open spec fn cnode_lookup_wf(self) -> bool {
 		&&& self.cnode_slots.dom() =~= self.cnode_lookup.dom()
-		&&& forall|obj: ObjectRef|
+		&&& forall|obj: ObjectRef| #![auto]
 			self.cnode_lookup.dom().contains(obj) ==> {
 				&&& obj.kind == ObjectKind::CNode
-				&&& forall|offset: int|
+				&&& forall|offset: int| #![auto]
 					self.cnode_lookup[obj].dom().contains(offset) ==> {
 						let slot = self.cnode_lookup[obj][offset];
 						&&& self.has_slot(slot)
@@ -395,7 +397,7 @@ impl CSpaceState {
 	}
 
 	pub open spec fn cspace_roots_wf(self) -> bool {
-		forall|slot: SlotId|
+		forall|slot: SlotId| #![auto]
 			self.roots.contains(slot) ==> {
 				&&& self.has_slot(slot)
 				&&& self.slot_cap(slot).kind == CapKind::CNodeCap
@@ -403,9 +405,9 @@ impl CSpaceState {
 	}
 
 	pub open spec fn cspace_graph_wf(self) -> bool {
-		forall|slot: SlotId|
+		forall|slot: SlotId| #![auto]
 			self.has_slot(slot) && self.slot_cap(slot).kind == CapKind::CNodeCap ==> {
-				&&& self.slot_cap(slot).object.is_Some()
+				&&& self.slot_cap(slot).object is Some
 				&&& self.cnode_slots.dom().contains(self.slot_cap(slot).object.unwrap())
 				&&& self.cnode_lookup.dom().contains(self.slot_cap(slot).object.unwrap())
 			}
@@ -422,13 +424,43 @@ impl CSpaceState {
 	}
 }
 
+/// Reusable Stage C entrypoint: unpack the `wf` bundle into the invariants later proofs need.
+pub proof fn lemma_wf_implies_core_invariants(state: CSpaceState)
+	requires
+		state.wf(),
+	ensures
+		state.valid_slots(),
+		state.mdb_prev_next_consistent(),
+		state.badge_derivation_wf(),
+		state.cnode_slots_wf(),
+		state.cnode_lookup_wf(),
+		state.cspace_roots_wf(),
+		state.cspace_graph_wf(),
+{
+}
+
+/// Reusable Stage C helper for proving properties about a single slot under `wf`.
+pub proof fn lemma_wf_implies_valid_slot_entry(
+	state: CSpaceState,
+	slot: SlotId,
+)
+	requires
+		state.wf(),
+		state.has_slot(slot),
+	ensures
+		state.valid_slot_entry(slot),
+{
+	lemma_wf_implies_core_invariants(state);
+	assert(state.valid_slots());
+}
+
 pub open spec fn slots_unchanged_except(
 	old_state: CSpaceState,
 	new_state: CSpaceState,
 	changed: Set<SlotId>,
 ) -> bool {
 	&&& old_state.slots.dom() =~= new_state.slots.dom()
-	&&& forall|slot: SlotId|
+	&&& forall|slot: SlotId| #![auto]
 		old_state.slots.dom().contains(slot) && !changed.contains(slot) ==> new_state.slots[slot] == old_state.slots[slot]
 }
 
