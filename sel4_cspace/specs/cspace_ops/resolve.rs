@@ -41,6 +41,17 @@ pub open spec fn spec_pow2(bits: nat) -> int
 	}
 }
 
+pub proof fn lemma_spec_pow2_positive(bits: nat)
+	ensures
+		0 < spec_pow2(bits),
+	decreases bits,
+{
+	if bits == 0 {
+	} else {
+		lemma_spec_pow2_positive((bits - 1) as nat);
+	}
+}
+
 pub open spec fn spec_extract_bits(value: int, start: int, width: int) -> int
 	recommends
 		0 <= value,
@@ -48,6 +59,25 @@ pub open spec fn spec_extract_bits(value: int, start: int, width: int) -> int
 		0 <= width,
 {
 	(value / spec_pow2(start as nat)) % spec_pow2(width as nat)
+}
+
+pub proof fn lemma_extract_bits_range(
+	value: int,
+	start: int,
+	width: int,
+)
+	requires
+		0 <= value,
+		0 <= start,
+		0 <= width,
+	ensures
+		0 <= spec_extract_bits(value, start, width) < spec_pow2(width as nat),
+{
+	lemma_spec_pow2_positive(width as nat);
+	vstd::arithmetic::div_mod::lemma_mod_bound(
+		value / spec_pow2(start as nat),
+		spec_pow2(width as nat),
+	);
 }
 
 pub open spec fn spec_cnode_level_bits(cnode_cap: CapSpec) -> int
@@ -138,7 +168,7 @@ pub open spec fn spec_cnode_cap_lookup_total(
 }
 
 pub open spec fn spec_cspace_lookup_total(state: CSpaceState) -> bool {
-	forall|slot: SlotId|
+	forall|slot: SlotId| #![auto]
 		state.has_slot(slot)
 		&& state.slot_cap(slot).kind == CapKind::CNodeCap
 		&& state.slot_cap(slot).cnode is Some
@@ -446,6 +476,24 @@ pub proof fn lemma_cspace_lookup_total_implies_cnode_lookup_total(
 	assert(spec_cnode_cap_lookup_total(state, state.slot_cap(slot)));
 }
 
+/// Reusable Stage C entrypoint: unpack `resolve_address_bits` preconditions into the
+/// global invariants and lookup-totality facts needed by later proofs.
+pub proof fn lemma_resolve_pre_implies_base_invariants(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+)
+	requires
+		spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
+	ensures
+		state.wf(),
+		spec_cspace_lookup_total(state),
+		state.cnode_lookup_wf(),
+{
+	lemma_wf_implies_core_invariants(state);
+}
+
 pub proof fn lemma_resolve_pre_implies_root_lookup_total(
 	state: CSpaceState,
 	root_cap: CapSpec,
@@ -461,6 +509,28 @@ pub proof fn lemma_resolve_pre_implies_root_lookup_total(
 		0 < spec_cnode_level_bits(root_cap),
 		spec_cnode_cap_lookup_total(state, root_cap),
 {
+}
+
+/// Reusable Stage C helper: when the root is a `CNodeCap`, the resolve precondition already
+/// packages every lookup-side fact needed to start a refinement proof.
+pub proof fn lemma_resolve_pre_implies_root_lookup_ready(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+)
+	requires
+		spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
+		root_cap.kind == CapKind::CNodeCap,
+	ensures
+		state.cnode_lookup_wf(),
+		root_cap.cnode is Some,
+		root_cap.object is Some,
+		0 < spec_cnode_level_bits(root_cap),
+		spec_cnode_cap_lookup_total(state, root_cap),
+{
+	lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+	lemma_resolve_pre_implies_root_lookup_total(state, root_cap, cap_ptr, bits);
 }
 
 pub proof fn lemma_cnode_slot_at_some_implies_has_slot(

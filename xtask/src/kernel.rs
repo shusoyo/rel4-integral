@@ -85,6 +85,63 @@ pub struct BuildOptions {
     pub benchmark: bool,
 }
 
+pub fn target_triple(platform: &str) -> Result<&'static str, anyhow::Error> {
+    match platform {
+        "spike" => Ok("riscv64gc-unknown-none-elf"),
+        "qemu-arm-virt" => Ok("aarch64-unknown-none-softfloat"),
+        _ => Err(anyhow::anyhow!("Unsupported platform")),
+    }
+}
+
+pub fn build_marcos(opts: &BuildOptions) -> Result<Vec<String>, anyhow::Error> {
+    let target = target_triple(&opts.platform)?;
+    let mut marcos = vec![format!(
+        "KERNEL_STACK_BITS={}",
+        rel4_config::get_int_from_cfg(&opts.platform, "memory.stack_bits").unwrap()
+    )];
+
+    if !opts.nofastpath {
+        marcos.push("FASTPATH=true".to_string());
+    }
+
+    if opts.mcs {
+        marcos.push("KERNEL_MCS=true".to_string());
+    }
+
+    if opts.smc && target.contains("aarch64") {
+        marcos.push("ALLOW_SMC_CALLS=true".to_string());
+    }
+
+    if opts.arm_pcnt && target.contains("aarch64") {
+        marcos.push("EXPORT_PCNT_USER=true".to_string());
+    }
+
+    if opts.arm_ptmr && target.contains("aarch64") {
+        marcos.push("EXPORT_PTMR_USER=true".to_string());
+    }
+
+    if opts.arm_hypervisor && target.contains("aarch64") {
+        marcos.push("ARCH_ARM_HYP=true".to_string());
+        marcos.push("AARCH64_VSPACE_S2_START_L1=true".to_string());
+    }
+
+    if opts.num_nodes > 1 {
+        marcos.push(format!("MAX_NUM_NODES={}", opts.num_nodes));
+        marcos.push("ENABLE_SMP_SUPPORT=true".to_string());
+    }
+
+    // TODO: add fpu config according the opts
+    // we think it's default open this option
+    marcos.push("HAVE_FPU=true".to_string());
+    match opts.platform.as_str() {
+        "spike" => marcos.push("RISCV_EXT_D=true".to_string()),
+        "qemu-arm-virt" => {}
+        _ => return Err(anyhow::anyhow!("Unsupported platform")),
+    };
+
+    Ok(marcos)
+}
+
 /// Parse CMAKE DEFINES from build options
 pub fn parse_cmake_defines(opts: &BuildOptions) -> Result<Vec<String>, anyhow::Error> {
     let mut define: Vec<String> = vec![];
@@ -121,15 +178,15 @@ pub fn parse_cmake_defines(opts: &BuildOptions) -> Result<Vec<String>, anyhow::E
 
 pub fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Result<(), anyhow::Error> {
     let dir: PathBuf = PathBuf::from(dir);
-    let target = match opts.platform.as_str() {
-        "spike" => "--target=riscv64gc-unknown-none-elf",
-        "qemu-arm-virt" => "--target=aarch64-unknown-none-softfloat",
-        _ => return Err(anyhow::anyhow!("Unsupported platform")),
-    };
+    let target = target_triple(&opts.platform)?;
     let current_dir = std::env::var("CARGO_MANIFEST_DIR")?;
     let easy_setting_cmake_file = PathBuf::from(&current_dir).join("../../easy-settings.cmake");
 
-    let mut args = vec![command.to_string(), target.to_string(), "--release".into()];
+    let mut args = vec![
+        command.to_string(),
+        format!("--target={target}"),
+        "--release".into(),
+    ];
 
     if opts.bin {
         args.push("--bin".into());
@@ -142,41 +199,26 @@ pub fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Result<(), anyhow
 
     let rustflags = vec_rustflags()?;
     let mut cmd = Command::new("cargo");
-
-    // build gcc marcos, we must add macros add xtask
-    let mut marcos = vec![format!(
-        "KERNEL_STACK_BITS={}",
-        rel4_config::get_int_from_cfg(&opts.platform, "memory.stack_bits").unwrap()
-    )];
-
-    if !opts.nofastpath {
-        marcos.push("FASTPATH=true".to_string());
-    }
+    let marcos = build_marcos(opts)?;
 
     if opts.mcs {
         append_features(&mut args, "kernel_mcs".to_string());
-        marcos.push("KERNEL_MCS=true".to_string());
     }
 
     if opts.smc && target.contains("aarch64") {
         append_features(&mut args, "enable_smc".to_string());
-        marcos.push("ALLOW_SMC_CALLS=true".to_string());
     }
 
     if opts.arm_pcnt && target.contains("aarch64") {
         append_features(&mut args, "enable_arm_pcnt".to_string());
-        marcos.push("EXPORT_PCNT_USER=true".to_string());
     }
 
     if opts.arm_ptmr && target.contains("aarch64") {
         append_features(&mut args, "enable_arm_ptmr".to_string());
-        marcos.push("EXPORT_PTMR_USER=true".to_string());
     }
 
     if opts.arm_hypervisor && target.contains("aarch64") {
         append_features(&mut args, "hypervisor".to_string());
-        marcos.push("ARCH_ARM_HYP=true".to_string());
-        marcos.push("AARCH64_VSPACE_S2_START_L1=true".to_string());
     }
 
     if Path::new(&easy_setting_cmake_file).exists() {
@@ -221,19 +263,13 @@ pub fn cargo(command: &str, dir: &str, opts: &BuildOptions) -> Result<(), anyhow
 
     if opts.num_nodes > 1 {
         append_features(&mut args, "enable_smp".to_string());
-        marcos.push(format!("MAX_NUM_NODES={}", opts.num_nodes));
-        marcos.push("ENABLE_SMP_SUPPORT=true".to_string());
     }
 
     //TODO: add fpu config according the opts
     //we think it's default open this option
     append_features(&mut args, "have_fpu".to_string());
-    marcos.push("HAVE_FPU=true".to_string());
     match opts.platform.as_str() {
-        "spike" => {
-            append_features(&mut args, "riscv_ext_d".to_string());
-            marcos.push("RISCV_EXT_D=true".to_string())
-        }
+        "spike" => append_features(&mut args, "riscv_ext_d".to_string()),
         "qemu-arm-virt" => {}
         _ => return Err(anyhow::anyhow!("Unsupported platform")),
     };
@@ -258,10 +294,13 @@ pub fn build(opts: &BuildOptions) -> Result<(), anyhow::Error> {
     let kernel = PathBuf::from(&current_dir).join("../kernel");
     cargo("build", kernel.to_str().unwrap(), opts)?;
 
-
     if !opts.rust_only {
         let defines = parse_cmake_defines(opts)?;
-        crate::cmake::sel4test_build(&opts.platform, &defines, super::cmake::get_build_dir(opts.benchmark))?;
+        crate::cmake::sel4test_build(
+            &opts.platform,
+            &defines,
+            super::cmake::get_build_dir(opts.benchmark),
+        )?;
     }
     println!("Building complete, enjoy rel4!");
     Ok(())

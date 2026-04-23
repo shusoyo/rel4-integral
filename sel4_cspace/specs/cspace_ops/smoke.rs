@@ -740,7 +740,8 @@ pub proof fn resolve_address_bits_smoke_check() {
 		assert(root_cap.cnode->Some_0.radix_bits == 1);
 		assert(spec_pow2(1nat) == 2) by (compute_only);
 		assert forall|offset: int|
-			0 <= offset < spec_pow2(root_cap.cnode->Some_0.radix_bits as nat) ==> state.cnode_cap_slot_at(root_cap, offset) is Some by {
+			0 <= offset < spec_pow2(root_cap.cnode->Some_0.radix_bits as nat)
+			implies state.cnode_cap_slot_at(root_cap, offset) is Some by {
 			if 0 <= offset < spec_pow2(root_cap.cnode->Some_0.radix_bits as nat) {
 				assert(offset == 0 || offset == 1);
 				if offset == 0 {
@@ -755,7 +756,8 @@ pub proof fn resolve_address_bits_smoke_check() {
 		assert(child_cap.cnode->Some_0.radix_bits == 1);
 		assert(spec_pow2(1nat) == 2) by (compute_only);
 		assert forall|offset: int|
-			0 <= offset < spec_pow2(child_cap.cnode->Some_0.radix_bits as nat) ==> state.cnode_cap_slot_at(child_cap, offset) is Some by {
+			0 <= offset < spec_pow2(child_cap.cnode->Some_0.radix_bits as nat)
+			implies state.cnode_cap_slot_at(child_cap, offset) is Some by {
 			if 0 <= offset < spec_pow2(child_cap.cnode->Some_0.radix_bits as nat) {
 				assert(offset == 0 || offset == 1);
 				if offset == 0 {

@@ -2,8 +2,14 @@ use std::{path::PathBuf, process::Command};
 
 use anyhow::Ok;
 
-pub(crate) fn sel4test_build(platform: &str, defines: &Vec<String>, dir: &str) -> Result<(), anyhow::Error> {
-    let build_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target").join(dir);
+pub(crate) fn sel4test_build(
+    platform: &str,
+    defines: &Vec<String>,
+    dir: &str,
+) -> Result<(), anyhow::Error> {
+    let build_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../target")
+        .join(dir);
     let build_dir_str = build_dir.to_str().unwrap();
     cmd!("rm", "-rf", build_dir_str).run()?;
     cmd!("mkdir", "-p", build_dir_str).run()?;

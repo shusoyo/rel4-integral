@@ -20,6 +20,9 @@ mod structures;
 #[path = "../specs/lib.rs"]
 pub mod specs;
 
+#[cfg(feature = "verify")]
+pub mod refinement_bridge;
+
 /// 需要外部实现的接口
 pub mod deps;
 /// 暴露给外部的接口
