@@ -85,6 +85,46 @@ pub open spec fn spec_cte_swap_pre(
 	&&& spec_cte_swap_root_compatible(old_state, slot2, cap1)
 }
 
+pub open spec fn spec_cte_swap_expected_slot1_entry(
+	old_state: CSpaceState,
+	slot1: SlotId,
+	slot2: SlotId,
+	cap2: CapSpec,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(slot1),
+		old_state.has_slot(slot2),
+{
+	let old_2 = old_state.slot_entry(slot2);
+	SlotEntrySpec {
+		cap: cap2,
+		mdb_prev: spec_swap_slot_ref(old_2.mdb_prev, slot1, slot2),
+		mdb_next: spec_swap_slot_ref(old_2.mdb_next, slot1, slot2),
+		mdb_revocable: old_2.mdb_revocable,
+		mdb_first_badged: old_2.mdb_first_badged,
+	}
+}
+
+pub open spec fn spec_cte_swap_expected_slot2_entry(
+	old_state: CSpaceState,
+	slot1: SlotId,
+	slot2: SlotId,
+	cap1: CapSpec,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(slot1),
+		old_state.has_slot(slot2),
+{
+	let old_1 = old_state.slot_entry(slot1);
+	SlotEntrySpec {
+		cap: cap1,
+		mdb_prev: spec_swap_slot_ref(old_1.mdb_prev, slot1, slot2),
+		mdb_next: spec_swap_slot_ref(old_1.mdb_next, slot1, slot2),
+		mdb_revocable: old_1.mdb_revocable,
+		mdb_first_badged: old_1.mdb_first_badged,
+	}
+}
+
 /// `cteSwap` exchanges two `(cap, mdb-position)` pairs.
 ///
 /// When the swapped nodes are MDB siblings, references to the partner slot must be rewritten,
@@ -279,6 +319,33 @@ pub proof fn lemma_cte_swap_post_preserves_untouched_slot(
 		spec_cte_swap_changed_slots(old_state, slot1, slot2),
 		slot,
 	);
+}
+
+pub proof fn lemma_cte_swap_post_implies_expected_slot_entries(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	slot1: SlotId,
+	slot2: SlotId,
+	cap1: CapSpec,
+	cap2: CapSpec,
+)
+	requires
+		old_state.has_slot(slot1),
+		old_state.has_slot(slot2),
+		new_state.has_slot(slot1),
+		new_state.has_slot(slot2),
+		spec_cte_swap_post(old_state, new_state, slot1, slot2, cap1, cap2),
+	ensures
+		new_state.slot_entry(slot1) == spec_cte_swap_expected_slot1_entry(old_state, slot1, slot2, cap2),
+		new_state.slot_entry(slot2) == spec_cte_swap_expected_slot2_entry(old_state, slot1, slot2, cap1),
+{
+	assert(spec_cte_swap_mdb_shape(old_state, new_state, slot1, slot2));
+	assert(new_state.slot_cap(slot1) == cap2);
+	assert(new_state.slot_cap(slot2) == cap1);
+	assert(new_state.slot_entry(slot1).cap == new_state.slot_cap(slot1));
+	assert(new_state.slot_entry(slot2).cap == new_state.slot_cap(slot2));
+	assert(new_state.slot_entry(slot1) == spec_cte_swap_expected_slot1_entry(old_state, slot1, slot2, cap2));
+	assert(new_state.slot_entry(slot2) == spec_cte_swap_expected_slot2_entry(old_state, slot1, slot2, cap1));
 }
 
 pub proof fn lemma_cte_swap_pre_post_implies_contract(

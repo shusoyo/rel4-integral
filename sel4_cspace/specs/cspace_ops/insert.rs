@@ -51,6 +51,111 @@ pub open spec fn spec_cte_insert_pre(
 	&&& spec_cte_insert_derivable(old_state.slot_cap(src), new_cap)
 }
 
+pub open spec fn spec_cte_insert_expected_src_cap(
+	old_state: CSpaceState,
+	src: SlotId,
+	new_cap: CapSpec,
+) -> CapSpec
+	recommends
+		old_state.has_slot(src),
+{
+	spec_set_untyped_cap_as_full_result(old_state.slot_cap(src), new_cap)
+}
+
+pub open spec fn spec_cte_insert_expected_src_entry(
+	old_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+	new_cap: CapSpec,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+{
+	let old_src = old_state.slot_entry(src);
+	SlotEntrySpec {
+		cap: spec_cte_insert_expected_src_cap(old_state, src, new_cap),
+		mdb_prev: old_src.mdb_prev,
+		mdb_next: Some(dest),
+		mdb_revocable: old_src.mdb_revocable,
+		mdb_first_badged: old_src.mdb_first_badged,
+	}
+}
+
+pub open spec fn spec_cte_insert_expected_dest_entry(
+	old_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+	new_cap: CapSpec,
+	new_cap_is_revocable: bool,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+{
+	let old_src = old_state.slot_entry(src);
+	SlotEntrySpec {
+		cap: new_cap,
+		mdb_prev: Some(src),
+		mdb_next: old_src.mdb_next,
+		mdb_revocable: new_cap_is_revocable,
+		mdb_first_badged: new_cap_is_revocable,
+	}
+}
+
+pub open spec fn spec_insert_new_cap_pre(
+	old_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+) -> bool
+	recommends
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+{
+	&&& old_state.wf()
+	&&& parent != slot
+	&&& old_state.has_slot(parent)
+	&&& old_state.has_slot(slot)
+	&&& !old_state.slot_empty(parent)
+	&&& old_state.slot_empty(slot)
+	&&& old_state.slot_entry(slot).mdb_prev is None
+	&&& old_state.slot_entry(slot).mdb_next is None
+	&&& spec_cte_insert_derivable(old_state.slot_cap(parent), new_cap)
+}
+
+pub open spec fn spec_insert_new_cap_expected_parent_entry(
+	old_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+{
+	let old_parent = old_state.slot_entry(parent);
+	SlotEntrySpec {
+		cap: old_state.slot_cap(parent),
+		mdb_prev: old_parent.mdb_prev,
+		mdb_next: Some(slot),
+		mdb_revocable: old_parent.mdb_revocable,
+		mdb_first_badged: old_parent.mdb_first_badged,
+	}
+}
+
+pub open spec fn spec_insert_new_cap_expected_slot_entry(
+	old_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+{
+	spec_cte_insert_expected_dest_entry(old_state, parent, slot, new_cap, true)
+}
+
 pub open spec fn spec_cte_insert_mdb_shape(
 	old_state: CSpaceState,
 	new_state: CSpaceState,
@@ -120,6 +225,52 @@ pub open spec fn spec_cte_insert_post(
 	&&& rights_subseteq(new_state.slot_cap(dest).rights, old_state.slot_cap(src).rights)
 	&&& spec_same_object_if_present(old_state.slot_cap(src), new_state.slot_cap(dest))
 	&&& spec_same_region_if_present(old_state.slot_cap(src), new_state.slot_cap(dest))
+}
+
+pub open spec fn spec_insert_new_cap_post(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+) -> bool
+	recommends
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+		new_state.has_slot(parent),
+		new_state.has_slot(slot),
+{
+	let changed = spec_cte_insert_changed_slots(old_state, parent, slot);
+
+	&&& new_state.wf()
+	&&& new_state.roots =~= old_state.roots
+	&&& new_state.cnode_slots =~= old_state.cnode_slots
+	&&& new_state.cnode_lookup =~= old_state.cnode_lookup
+	&&& slots_unchanged_except(old_state, new_state, changed)
+	&&& new_state.slot_cap(parent) == old_state.slot_cap(parent)
+	&&& new_state.slot_cap(slot) == new_cap
+	&&& spec_cte_insert_mdb_shape(old_state, new_state, parent, slot, true)
+	&&& new_state.mdb_links(parent, slot)
+	&&& rights_subseteq(new_state.slot_cap(slot).rights, old_state.slot_cap(parent).rights)
+	&&& spec_same_object_if_present(old_state.slot_cap(parent), new_state.slot_cap(slot))
+	&&& spec_same_region_if_present(old_state.slot_cap(parent), new_state.slot_cap(slot))
+}
+
+pub open spec fn spec_insert_new_cap(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+) -> bool
+	recommends
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+		new_state.has_slot(parent),
+		new_state.has_slot(slot),
+{
+	&&& spec_insert_new_cap_pre(old_state, parent, slot, new_cap)
+	&&& spec_insert_new_cap_post(old_state, new_state, parent, slot, new_cap)
 }
 
 pub open spec fn spec_cte_insert(
@@ -199,6 +350,84 @@ pub proof fn lemma_cte_insert_post_preserves_untouched_slot(
 		spec_cte_insert_changed_slots(old_state, src, dest),
 		slot,
 	);
+}
+
+pub proof fn lemma_cte_insert_post_implies_expected_src_dest_entries(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+	new_cap: CapSpec,
+	new_cap_is_revocable: bool,
+)
+	requires
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+		new_state.has_slot(src),
+		new_state.has_slot(dest),
+		spec_cte_insert_post(old_state, new_state, src, dest, new_cap, new_cap_is_revocable),
+	ensures
+		new_state.slot_entry(src) == spec_cte_insert_expected_src_entry(old_state, src, dest, new_cap),
+		new_state.slot_entry(dest) == spec_cte_insert_expected_dest_entry(old_state, src, dest, new_cap, new_cap_is_revocable),
+{
+	assert(spec_set_untyped_cap_as_full_effect(
+		old_state.slot_cap(src),
+		new_cap,
+		new_state.slot_cap(src),
+	));
+	assert(new_state.slot_cap(src) == spec_cte_insert_expected_src_cap(old_state, src, new_cap));
+	assert(spec_cte_insert_mdb_shape(old_state, new_state, src, dest, new_cap_is_revocable));
+	assert(new_state.slot_entry(src).cap == new_state.slot_cap(src));
+	assert(new_state.slot_entry(dest).cap == new_state.slot_cap(dest));
+	assert(new_state.slot_cap(dest) == new_cap);
+	assert(new_state.slot_entry(src) == spec_cte_insert_expected_src_entry(old_state, src, dest, new_cap));
+	assert(new_state.slot_entry(dest) == spec_cte_insert_expected_dest_entry(old_state, src, dest, new_cap, new_cap_is_revocable));
+}
+
+pub proof fn lemma_insert_new_cap_post_implies_expected_parent_slot_entries(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+)
+	requires
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+		new_state.has_slot(parent),
+		new_state.has_slot(slot),
+		spec_insert_new_cap_post(old_state, new_state, parent, slot, new_cap),
+	ensures
+		new_state.slot_entry(parent) == spec_insert_new_cap_expected_parent_entry(old_state, parent, slot),
+		new_state.slot_entry(slot) == spec_insert_new_cap_expected_slot_entry(old_state, parent, slot, new_cap),
+{
+	assert(spec_cte_insert_mdb_shape(old_state, new_state, parent, slot, true));
+	assert(new_state.slot_cap(parent) == old_state.slot_cap(parent));
+	assert(new_state.slot_cap(slot) == new_cap);
+	assert(new_state.slot_entry(parent).cap == new_state.slot_cap(parent));
+	assert(new_state.slot_entry(slot).cap == new_state.slot_cap(slot));
+	assert(new_state.slot_entry(parent) == spec_insert_new_cap_expected_parent_entry(old_state, parent, slot));
+	assert(new_state.slot_entry(slot) == spec_insert_new_cap_expected_slot_entry(old_state, parent, slot, new_cap));
+}
+
+pub proof fn lemma_insert_new_cap_pre_post_implies_contract(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	parent: SlotId,
+	slot: SlotId,
+	new_cap: CapSpec,
+)
+	requires
+		old_state.has_slot(parent),
+		old_state.has_slot(slot),
+		new_state.has_slot(parent),
+		new_state.has_slot(slot),
+		spec_insert_new_cap_pre(old_state, parent, slot, new_cap),
+		spec_insert_new_cap_post(old_state, new_state, parent, slot, new_cap),
+	ensures
+		spec_insert_new_cap(old_state, new_state, parent, slot, new_cap),
+{
+	assert(spec_insert_new_cap(old_state, new_state, parent, slot, new_cap));
 }
 
 pub proof fn lemma_cte_insert_pre_post_implies_contract(

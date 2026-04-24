@@ -717,6 +717,58 @@ pub proof fn lemma_resolve_address_bits_recursive_success(
 	assert(spec_resolve_address_bits_success(state, root_cap, cap_ptr, bits, slot, bits_left));
 }
 
+pub proof fn lemma_resolve_address_bits_success_implies_bits_left_in_range(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+	slot: SlotId,
+	bits_left: int,
+)
+	requires
+		0 <= cap_ptr,
+		0 <= bits,
+		state.has_slot(slot),
+		spec_resolve_address_bits_success(state, root_cap, cap_ptr, bits, slot, bits_left),
+	ensures
+		0 <= bits_left <= bits,
+	decreases bits,
+{
+	if !(root_cap.kind == CapKind::CNodeCap
+		&& root_cap.cnode is Some
+		&& root_cap.object is Some) {
+		assert(false);
+	} else {
+		let level_bits = spec_cnode_level_bits(root_cap);
+		let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+		assert(0 < level_bits);
+		assert(spec_resolve_guard_matches(root_cap, cap_ptr, bits));
+		assert(level_bits <= bits);
+		assert(next_slot is Some);
+		let next = next_slot.unwrap();
+		assert(state.has_slot(next));
+		if bits == level_bits {
+			assert(bits_left == 0);
+		} else {
+			let remaining = bits - level_bits;
+			assert(0 <= remaining < bits);
+			let next_cap = state.slot_cap(next);
+			if next_cap.kind == CapKind::CNodeCap {
+				lemma_resolve_address_bits_success_implies_bits_left_in_range(
+					state,
+					next_cap,
+					cap_ptr,
+					remaining,
+					slot,
+					bits_left,
+				);
+			} else {
+				assert(bits_left == remaining);
+			}
+		}
+	}
+}
+
 pub proof fn lemma_resolve_address_bits_recursive_fault(
 	state: CSpaceState,
 	root_cap: CapSpec,

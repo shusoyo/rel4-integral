@@ -1,15 +1,20 @@
 #![allow(dead_code)]
 
-use crate::cte::cte_t;
+use crate::cte::{cte_t, deriveCap_ret};
 use crate::structures::resolveAddressBits_ret_t;
 use sel4_common::structures::exception_t;
-use sel4_common::structures_gen::cap;
+use sel4_common::structures_gen::{cap, cap_null_cap, cap_tag};
+use sel4_common::utils::convert_to_type_ref;
 use vstd::prelude::*;
 
 verus! {
 
 #[allow(unused_imports)]
 use crate::specs::abstract_cspace::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::common::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::derive::*;
 #[allow(unused_imports)]
 use crate::specs::cspace_ops::insert::*;
 #[allow(unused_imports)]
@@ -30,6 +35,151 @@ pub struct ExCte(cte_t);
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExResolveAddressBitsRet(resolveAddressBits_ret_t);
+
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExException(exception_t);
+
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExDeriveCapRet(deriveCap_ret);
+
+pub uninterp spec fn trusted_exception_is_none(status: exception_t) -> bool;
+
+pub uninterp spec fn trusted_exception_is_syscall_error(status: exception_t) -> bool;
+
+pub uninterp spec fn trusted_derive_cap_ret_is_none(ret: &deriveCap_ret) -> bool;
+
+pub uninterp spec fn trusted_derive_cap_ret_is_syscall_error(ret: &deriveCap_ret) -> bool;
+
+pub uninterp spec fn trusted_view_derive_cap_ret_capability(ret: &deriveCap_ret) -> CapSpec;
+
+#[verifier::external_body]
+pub fn trusted_make_derive_cap_ret(status: exception_t, capability: &cap) -> (ret: deriveCap_ret)
+    ensures
+        trusted_view_derive_cap_ret_capability(&ret) == trusted_view_cap(capability),
+        trusted_derive_cap_ret_is_none(&ret) == trusted_exception_is_none(status),
+        trusted_derive_cap_ret_is_syscall_error(&ret) == trusted_exception_is_syscall_error(status),
+{
+    deriveCap_ret {
+        status,
+        capability: capability.clone(),
+    }
+}
+
+#[verifier::external_body]
+pub fn trusted_make_exception_none() -> (ret: exception_t)
+    ensures
+        trusted_exception_is_none(ret),
+        !trusted_exception_is_syscall_error(ret),
+{
+    exception_t::EXCEPTION_NONE
+}
+
+#[verifier::external_body]
+pub fn trusted_make_exception_syscall_error() -> (ret: exception_t)
+    ensures
+        trusted_exception_is_syscall_error(ret),
+        !trusted_exception_is_none(ret),
+{
+    exception_t::EXCEPTION_SYSCALL_ERROR
+}
+
+#[verifier::external_body]
+pub fn trusted_check_exception_is_none(status: exception_t) -> (ret: bool)
+    ensures
+        ret == trusted_exception_is_none(status),
+{
+    status == exception_t::EXCEPTION_NONE
+}
+
+#[verifier::external_body]
+pub fn trusted_check_exception_is_syscall_error(status: exception_t) -> (ret: bool)
+    ensures
+        ret == trusted_exception_is_syscall_error(status),
+{
+    status == exception_t::EXCEPTION_SYSCALL_ERROR
+}
+
+#[verifier::external_body]
+pub fn trusted_make_null_cap() -> (ret: cap)
+    ensures
+        trusted_view_cap(&ret) == spec_null_cap(),
+{
+    cap_null_cap::new().unsplay()
+}
+
+#[verifier::external_body]
+pub fn trusted_clone_cap(raw: &cap) -> (ret: cap)
+    ensures
+        trusted_view_cap(&ret) == trusted_view_cap(raw),
+{
+    raw.clone()
+}
+
+#[verifier::external_body]
+pub fn trusted_cap_is_zombie(raw: &cap) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cap(raw).kind == CapKind::ZombieCap),
+{
+    raw.get_tag() == cap_tag::cap_zombie_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_cap_is_untyped(raw: &cap) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cap(raw).kind == CapKind::UntypedCap),
+{
+    raw.get_tag() == cap_tag::cap_untyped_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_cap_is_reply(raw: &cap) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cap(raw).kind == CapKind::ReplyCap),
+{
+    raw.get_tag() == cap_tag::cap_reply_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_cap_is_irq_control(raw: &cap) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cap(raw).kind == CapKind::IRQControlCap),
+{
+    raw.get_tag() == cap_tag::cap_irq_control_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_slot_cap_is_null(raw_slot: &cte_t) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cte(raw_slot).cap.kind == CapKind::NullCap),
+{
+    raw_slot.capability.get_tag() == cap_tag::cap_null_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_slot_cap_is_thread(raw_slot: &cte_t) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cte(raw_slot).cap.kind == CapKind::ThreadCap),
+{
+    raw_slot.capability.get_tag() == cap_tag::cap_thread_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_slot_cap_is_zombie(raw_slot: &cte_t) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cte(raw_slot).cap.kind == CapKind::ZombieCap),
+{
+    raw_slot.capability.get_tag() == cap_tag::cap_zombie_cap
+}
+
+#[verifier::external_body]
+pub fn trusted_slot_cap_is_cnode(raw_slot: &cte_t) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cte(raw_slot).cap.kind == CapKind::CNodeCap),
+{
+    raw_slot.capability.get_tag() == cap_tag::cap_cnode_cap
+}
 
 #[verifier::ext_equal]
 #[derive(Copy, Clone)]
@@ -551,13 +701,15 @@ pub open spec fn resolve_address_bits_expected_core_from_cap(
             && 0 <= root_cap.cnode->Some_0.guard_size
             && 0 < level_bits) {
             resolve_address_bits_fault_core(bits)
-        } else if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
-            resolve_address_bits_fault_core(bits)
-        } else if level_bits > bits {
-            resolve_address_bits_fault_core(bits)
         } else {
+            // Follow l4v's phase split: compute the candidate child slot first,
+            // then classify guard/depth/success outcomes.
             let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
-            if next_slot is Some {
+            if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+                resolve_address_bits_fault_core(bits)
+            } else if level_bits > bits {
+                resolve_address_bits_fault_core(bits)
+            } else if next_slot is Some {
                 let next = next_slot.unwrap();
                 if !state.has_slot(next) {
                     resolve_address_bits_fault_core(bits)
@@ -652,6 +804,142 @@ pub uninterp spec fn trusted_concrete_cnode_lookup_slot_at(
     cnode_obj: ObjectRef,
     offset: int,
 ) -> SlotId;
+
+pub uninterp spec fn trusted_slot_ref_is_id(
+    slot: &cte_t,
+    id: SlotId,
+) -> bool;
+
+pub open spec fn trusted_slot_pair_refs_are_ids(
+    slot1: &cte_t,
+    slot1_id: SlotId,
+    slot2: &cte_t,
+    slot2_id: SlotId,
+) -> bool {
+    &&& trusted_slot_ref_is_id(slot1, slot1_id)
+    &&& trusted_slot_ref_is_id(slot2, slot2_id)
+}
+
+pub open spec fn is_final_cap_call_pre_at(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    slot: SlotId,
+    raw_slot: &cte_t,
+) -> bool {
+    &&& state.has_slot(slot)
+    &&& trusted_slot_ref_is_id(raw_slot, slot)
+    &&& trusted_cspace_heap_matches_state_at(heap, state)
+}
+
+#[verifier::external_body]
+pub proof fn lemma_is_final_cap_call_pre_at_implies_raw_slot_view_matches_state(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    slot: SlotId,
+    raw_slot: &cte_t,
+)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        trusted_view_cte(raw_slot) == state.slot_entry(slot),
+        trusted_view_cte(raw_slot).cap == state.slot_cap(slot),
+{
+}
+
+#[verifier::external_body]
+pub fn trusted_follow_mdb_next(raw_slot: &cte_t) -> (out: &'static cte_t)
+    requires
+        trusted_view_cte(raw_slot).mdb_next is Some,
+    ensures
+        trusted_slot_ref_is_id(out, trusted_view_cte(raw_slot).mdb_next.unwrap()),
+{
+    convert_to_type_ref::<cte_t>(raw_slot.cteMDBNode.get_mdbNext() as usize)
+}
+
+#[verifier::external_body]
+pub fn trusted_mdb_next_slot_id(raw_slot: &cte_t) -> (out: usize)
+    ensures
+        out == if trusted_view_cte(raw_slot).mdb_next is Some {
+            trusted_view_cte(raw_slot).mdb_next.unwrap() as usize
+        } else {
+            0usize
+        },
+{
+    raw_slot.cteMDBNode.get_mdbNext() as usize
+}
+
+#[verifier::external_body]
+pub fn trusted_has_mdb_next(raw_slot: &cte_t) -> (ret: bool)
+    ensures
+        ret == (trusted_view_cte(raw_slot).mdb_next is Some),
+{
+    raw_slot.cteMDBNode.get_mdbNext() != 0
+}
+
+pub open spec fn derive_cap_call_pre_at(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    slot: SlotId,
+    raw_slot: &cte_t,
+    raw_capability: &cap,
+) -> bool {
+    &&& is_final_cap_call_pre_at(heap, state, slot, raw_slot)
+    &&& spec_derive_cap_pre(state, slot, trusted_view_cap(raw_capability))
+}
+
+pub open spec fn is_mdb_parent_of_call_pre_at(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    parent: SlotId,
+    child: SlotId,
+    raw_parent: &cte_t,
+    raw_child: &cte_t,
+) -> bool {
+    &&& state.has_slot(parent)
+    &&& state.has_slot(child)
+    &&& trusted_slot_pair_refs_are_ids(raw_parent, parent, raw_child, child)
+    &&& trusted_cspace_heap_matches_state_at(heap, state)
+}
+
+pub proof fn lemma_derive_cap_call_pre_at_implies_slot_refines(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    slot: SlotId,
+    raw_slot: &cte_t,
+    raw_capability: &cap,
+)
+    requires
+        derive_cap_call_pre_at(heap, state, slot, raw_slot, raw_capability),
+    ensures
+        refines_cte(trusted_concrete_slot_view_at(heap, slot), state.slot_entry(slot)),
+        refines_cap(trusted_concrete_slot_view_at(heap, slot).cap, state.slot_cap(slot)),
+{
+    assert(trusted_cspace_heap_matches_state_at(heap, state));
+    assert(trusted_cspace_slot_views_match_state_at(heap, state));
+    lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(heap, state, slot);
+}
+
+pub proof fn lemma_is_mdb_parent_of_call_pre_at_implies_parent_child_refine(
+    heap: ConcreteHeapId,
+    state: CSpaceState,
+    parent: SlotId,
+    child: SlotId,
+    raw_parent: &cte_t,
+    raw_child: &cte_t,
+)
+    requires
+        is_mdb_parent_of_call_pre_at(heap, state, parent, child, raw_parent, raw_child),
+    ensures
+        refines_cte(trusted_concrete_slot_view_at(heap, parent), state.slot_entry(parent)),
+        refines_cap(trusted_concrete_slot_view_at(heap, parent).cap, state.slot_cap(parent)),
+        refines_cte(trusted_concrete_slot_view_at(heap, child), state.slot_entry(child)),
+        refines_cap(trusted_concrete_slot_view_at(heap, child).cap, state.slot_cap(child)),
+{
+    assert(trusted_cspace_heap_matches_state_at(heap, state));
+    assert(trusted_cspace_slot_views_match_state_at(heap, state));
+    lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(heap, state, parent);
+    lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(heap, state, child);
+}
 
 pub open spec fn trusted_cspace_selected_slot_views_match_state_at(
     heap: ConcreteHeapId,
@@ -869,6 +1157,38 @@ pub proof fn lemma_trusted_cspace_local_heap_transition_at_implies_changed_slot_
     );
 }
 
+pub proof fn lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    changed: Set<SlotId>,
+    slot: SlotId,
+    expected: SlotEntrySpec,
+)
+    requires
+        trusted_cspace_local_heap_transition_at(old_heap, old_state, new_heap, new_state, changed),
+        changed.contains(slot),
+        new_state.slot_entry(slot) == expected,
+    ensures
+        trusted_concrete_slot_view_at(new_heap, slot) == expected,
+        refines_cte(trusted_concrete_slot_view_at(new_heap, slot), expected),
+        refines_cap(trusted_concrete_slot_view_at(new_heap, slot).cap, expected.cap),
+{
+    lemma_trusted_cspace_local_heap_transition_at_implies_changed_slot_refines_new_state(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        slot,
+    );
+    assert(trusted_concrete_slot_view_at(new_heap, slot) == new_state.slot_entry(slot));
+    assert(trusted_concrete_slot_view_at(new_heap, slot) == expected);
+    assert(refines_cte(trusted_concrete_slot_view_at(new_heap, slot), expected));
+    assert(refines_cap(trusted_concrete_slot_view_at(new_heap, slot).cap, expected.cap));
+}
+
 pub proof fn lemma_trusted_cspace_local_heap_transition_at_implies_untouched_slot_refines_old_state(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
@@ -1039,6 +1359,19 @@ pub open spec fn cte_insert_bridge_pre_at(
     &&& spec_cte_insert_pre(old_state, src, dest, trusted_view_cap(raw_new_cap))
 }
 
+pub open spec fn cte_insert_call_pre_at(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    src: SlotId,
+    dest: SlotId,
+    raw_new_cap: &cap,
+    src_slot: &cte_t,
+    dest_slot: &cte_t,
+) -> bool {
+    &&& trusted_slot_pair_refs_are_ids(src_slot, src, dest_slot, dest)
+    &&& cte_insert_bridge_pre_at(old_heap, old_state, src, dest, raw_new_cap)
+}
+
 pub open spec fn cte_insert_local_heap_transition_at(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
@@ -1056,18 +1389,96 @@ pub open spec fn cte_insert_local_heap_transition_at(
     )
 }
 
-pub proof fn lemma_cte_insert_bridge_pre_at_implies_spec_pre(
+pub open spec fn insert_new_cap_bridge_pre_at(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
-    src: SlotId,
-    dest: SlotId,
+    parent: SlotId,
+    slot: SlotId,
     raw_new_cap: &cap,
+) -> bool {
+    &&& trusted_cspace_heap_matches_state_at(old_heap, old_state)
+    &&& spec_insert_new_cap_pre(old_state, parent, slot, trusted_view_cap(raw_new_cap))
+}
+
+pub open spec fn insert_new_cap_call_pre_at(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    parent: SlotId,
+    slot: SlotId,
+    raw_new_cap: &cap,
+    raw_parent: &cte_t,
+    raw_slot: &cte_t,
+) -> bool {
+    &&& trusted_slot_pair_refs_are_ids(raw_parent, parent, raw_slot, slot)
+    &&& insert_new_cap_bridge_pre_at(old_heap, old_state, parent, slot, raw_new_cap)
+}
+
+pub open spec fn insert_new_cap_local_heap_transition_at(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    parent: SlotId,
+    slot: SlotId,
+) -> bool {
+    trusted_cspace_local_heap_transition_at(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        spec_cte_insert_changed_slots(old_state, parent, slot),
+    )
+}
+
+pub proof fn lemma_insert_new_cap_local_heap_transition_post_implies_expected_parent_slot_views(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    parent: SlotId,
+    slot: SlotId,
+    new_cap: CapSpec,
 )
     requires
-        cte_insert_bridge_pre_at(old_heap, old_state, src, dest, raw_new_cap),
+        old_state.has_slot(parent),
+        old_state.has_slot(slot),
+        new_state.has_slot(parent),
+        new_state.has_slot(slot),
+        insert_new_cap_local_heap_transition_at(old_heap, old_state, new_heap, new_state, parent, slot),
+        spec_insert_new_cap_post(old_state, new_state, parent, slot, new_cap),
     ensures
-        spec_cte_insert_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)),
+        trusted_concrete_slot_view_at(new_heap, parent)
+            == spec_insert_new_cap_expected_parent_entry(old_state, parent, slot),
+        trusted_concrete_slot_view_at(new_heap, slot)
+            == spec_insert_new_cap_expected_slot_entry(old_state, parent, slot, new_cap),
 {
+    let changed = spec_cte_insert_changed_slots(old_state, parent, slot);
+    lemma_insert_new_cap_post_implies_expected_parent_slot_entries(
+        old_state,
+        new_state,
+        parent,
+        slot,
+        new_cap,
+    );
+    lemma_cte_insert_changed_slots_contains_src_dest(old_state, parent, slot);
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        parent,
+        spec_insert_new_cap_expected_parent_entry(old_state, parent, slot),
+    );
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        slot,
+        spec_insert_new_cap_expected_slot_entry(old_state, parent, slot, new_cap),
+    );
 }
 
 pub proof fn lemma_cte_insert_bridge_pre_at_implies_src_dest_refine(
@@ -1085,7 +1496,9 @@ pub proof fn lemma_cte_insert_bridge_pre_at_implies_src_dest_refine(
         refines_cte(trusted_concrete_slot_view_at(old_heap, dest), old_state.slot_entry(dest)),
         refines_cap(trusted_concrete_slot_view_at(old_heap, dest).cap, old_state.slot_cap(dest)),
 {
-    lemma_cte_insert_bridge_pre_at_implies_spec_pre(old_heap, old_state, src, dest, raw_new_cap);
+    assert(spec_cte_insert_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)));
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, src);
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, dest);
 }
@@ -1110,42 +1523,85 @@ pub proof fn lemma_cte_insert_bridge_pre_at_implies_old_next_refine(
             old_state.slot_cap(old_state.slot_entry(src).mdb_next.unwrap()),
         ),
 {
-    lemma_cte_insert_bridge_pre_at_implies_spec_pre(old_heap, old_state, src, dest, raw_new_cap);
+    assert(spec_cte_insert_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)));
+    assert(old_state.wf());
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_wf_implies_valid_slot_entry(old_state, src);
     let next = old_state.slot_entry(src).mdb_next.unwrap();
     assert(old_state.has_slot(next));
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, next);
 }
 
-pub proof fn lemma_cte_insert_local_heap_transition_at_implies_post_heap_matches_state_at(
+pub proof fn lemma_cte_insert_local_heap_transition_post_implies_expected_src_dest_views(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
     new_heap: ConcreteHeapId,
     new_state: CSpaceState,
     src: SlotId,
     dest: SlotId,
-    raw_new_cap: &cap,
+    new_cap: CapSpec,
     new_cap_is_revocable: bool,
 )
     requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
         cte_insert_local_heap_transition_at(old_heap, old_state, new_heap, new_state, src, dest),
         spec_cte_insert_post(
             old_state,
             new_state,
             src,
             dest,
-            trusted_view_cap(raw_new_cap),
+            new_cap,
             new_cap_is_revocable,
         ),
     ensures
-        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        trusted_concrete_slot_view_at(new_heap, src)
+            == spec_cte_insert_expected_src_entry(old_state, src, dest, new_cap),
+        trusted_concrete_slot_view_at(new_heap, dest)
+            == spec_cte_insert_expected_dest_entry(
+                old_state,
+                src,
+                dest,
+                new_cap,
+                new_cap_is_revocable,
+            ),
 {
-    lemma_trusted_cspace_local_heap_transition_at_implies_post_heap_matches_state_at(
+    let changed = spec_cte_insert_changed_slots(old_state, src, dest);
+    lemma_cte_insert_post_implies_expected_src_dest_entries(
+        old_state,
+        new_state,
+        src,
+        dest,
+        new_cap,
+        new_cap_is_revocable,
+    );
+    lemma_cte_insert_changed_slots_contains_src_dest(old_state, src, dest);
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
         old_heap,
         old_state,
         new_heap,
         new_state,
-        spec_cte_insert_changed_slots(old_state, src, dest),
+        changed,
+        src,
+        spec_cte_insert_expected_src_entry(old_state, src, dest, new_cap),
+    );
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        dest,
+        spec_cte_insert_expected_dest_entry(
+            old_state,
+            src,
+            dest,
+            new_cap,
+            new_cap_is_revocable,
+        ),
     );
 }
 
@@ -1158,6 +1614,19 @@ pub open spec fn cte_move_bridge_pre_at(
 ) -> bool {
     &&& trusted_cspace_heap_matches_state_at(old_heap, old_state)
     &&& spec_cte_move_pre(old_state, src, dest, trusted_view_cap(raw_new_cap))
+}
+
+pub open spec fn cte_move_call_pre_at(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    src: SlotId,
+    dest: SlotId,
+    raw_new_cap: &cap,
+    src_slot: &cte_t,
+    dest_slot: &cte_t,
+) -> bool {
+    &&& trusted_slot_pair_refs_are_ids(src_slot, src, dest_slot, dest)
+    &&& cte_move_bridge_pre_at(old_heap, old_state, src, dest, raw_new_cap)
 }
 
 pub open spec fn cte_move_local_heap_transition_at(
@@ -1177,20 +1646,6 @@ pub open spec fn cte_move_local_heap_transition_at(
     )
 }
 
-pub proof fn lemma_cte_move_bridge_pre_at_implies_spec_pre(
-    old_heap: ConcreteHeapId,
-    old_state: CSpaceState,
-    src: SlotId,
-    dest: SlotId,
-    raw_new_cap: &cap,
-)
-    requires
-        cte_move_bridge_pre_at(old_heap, old_state, src, dest, raw_new_cap),
-    ensures
-        spec_cte_move_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)),
-{
-}
-
 pub proof fn lemma_cte_move_bridge_pre_at_implies_src_dest_refine(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
@@ -1206,7 +1661,9 @@ pub proof fn lemma_cte_move_bridge_pre_at_implies_src_dest_refine(
         refines_cte(trusted_concrete_slot_view_at(old_heap, dest), old_state.slot_entry(dest)),
         refines_cap(trusted_concrete_slot_view_at(old_heap, dest).cap, old_state.slot_cap(dest)),
 {
-    lemma_cte_move_bridge_pre_at_implies_spec_pre(old_heap, old_state, src, dest, raw_new_cap);
+    assert(spec_cte_move_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)));
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, src);
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, dest);
 }
@@ -1232,7 +1689,10 @@ pub proof fn lemma_cte_move_bridge_pre_at_implies_neighbors_refine(
             &&& refines_cap(trusted_concrete_slot_view_at(old_heap, next).cap, old_state.slot_cap(next))
         },
 {
-    lemma_cte_move_bridge_pre_at_implies_spec_pre(old_heap, old_state, src, dest, raw_new_cap);
+    assert(spec_cte_move_pre(old_state, src, dest, trusted_view_cap(raw_new_cap)));
+    assert(old_state.wf());
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_wf_implies_valid_slot_entry(old_state, src);
     if old_state.slot_entry(src).mdb_prev is Some {
         let prev = old_state.slot_entry(src).mdb_prev.unwrap();
@@ -1246,33 +1706,53 @@ pub proof fn lemma_cte_move_bridge_pre_at_implies_neighbors_refine(
     }
 }
 
-pub proof fn lemma_cte_move_local_heap_transition_at_implies_post_heap_matches_state_at(
+pub proof fn lemma_cte_move_local_heap_transition_post_implies_expected_src_dest_views(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
     new_heap: ConcreteHeapId,
     new_state: CSpaceState,
     src: SlotId,
     dest: SlotId,
-    raw_new_cap: &cap,
+    new_cap: CapSpec,
 )
     requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
         cte_move_local_heap_transition_at(old_heap, old_state, new_heap, new_state, src, dest),
-        spec_cte_move_post(
-            old_state,
-            new_state,
-            src,
-            dest,
-            trusted_view_cap(raw_new_cap),
-        ),
+        spec_cte_move_post(old_state, new_state, src, dest, new_cap),
     ensures
-        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        trusted_concrete_slot_view_at(new_heap, src) == spec_cte_move_expected_src_entry(),
+        trusted_concrete_slot_view_at(new_heap, dest)
+            == spec_cte_move_expected_dest_entry(old_state, src, new_cap),
 {
-    lemma_trusted_cspace_local_heap_transition_at_implies_post_heap_matches_state_at(
+    let changed = spec_cte_move_changed_slots(old_state, src, dest);
+    lemma_cte_move_post_implies_expected_src_dest_entries(
+        old_state,
+        new_state,
+        src,
+        dest,
+        new_cap,
+    );
+    lemma_cte_move_changed_slots_contains_core(old_state, src, dest);
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
         old_heap,
         old_state,
         new_heap,
         new_state,
-        spec_cte_move_changed_slots(old_state, src, dest),
+        changed,
+        src,
+        spec_cte_move_expected_src_entry(),
+    );
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        dest,
+        spec_cte_move_expected_dest_entry(old_state, src, new_cap),
     );
 }
 
@@ -1294,6 +1774,20 @@ pub open spec fn cte_swap_bridge_pre_at(
     )
 }
 
+pub open spec fn cte_swap_call_pre_at(
+    old_heap: ConcreteHeapId,
+    old_state: CSpaceState,
+    slot1: SlotId,
+    slot2: SlotId,
+    raw_cap1: &cap,
+    raw_cap2: &cap,
+    raw_slot1: &cte_t,
+    raw_slot2: &cte_t,
+) -> bool {
+    &&& trusted_slot_pair_refs_are_ids(raw_slot1, slot1, raw_slot2, slot2)
+    &&& cte_swap_bridge_pre_at(old_heap, old_state, slot1, slot2, raw_cap1, raw_cap2)
+}
+
 pub open spec fn cte_swap_local_heap_transition_at(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
@@ -1309,27 +1803,6 @@ pub open spec fn cte_swap_local_heap_transition_at(
         new_state,
         spec_cte_swap_changed_slots(old_state, slot1, slot2),
     )
-}
-
-pub proof fn lemma_cte_swap_bridge_pre_at_implies_spec_pre(
-    old_heap: ConcreteHeapId,
-    old_state: CSpaceState,
-    slot1: SlotId,
-    slot2: SlotId,
-    raw_cap1: &cap,
-    raw_cap2: &cap,
-)
-    requires
-        cte_swap_bridge_pre_at(old_heap, old_state, slot1, slot2, raw_cap1, raw_cap2),
-    ensures
-        spec_cte_swap_pre(
-            old_state,
-            slot1,
-            slot2,
-            trusted_view_cap(raw_cap1),
-            trusted_view_cap(raw_cap2),
-        ),
-{
 }
 
 pub proof fn lemma_cte_swap_bridge_pre_at_implies_core_slots_refine(
@@ -1348,7 +1821,15 @@ pub proof fn lemma_cte_swap_bridge_pre_at_implies_core_slots_refine(
         refines_cte(trusted_concrete_slot_view_at(old_heap, slot2), old_state.slot_entry(slot2)),
         refines_cap(trusted_concrete_slot_view_at(old_heap, slot2).cap, old_state.slot_cap(slot2)),
 {
-    lemma_cte_swap_bridge_pre_at_implies_spec_pre(old_heap, old_state, slot1, slot2, raw_cap1, raw_cap2);
+    assert(spec_cte_swap_pre(
+        old_state,
+        slot1,
+        slot2,
+        trusted_view_cap(raw_cap1),
+        trusted_view_cap(raw_cap2),
+    ));
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, slot1);
     lemma_trusted_cspace_slot_views_match_state_at_implies_slot_refines(old_heap, old_state, slot2);
 }
@@ -1385,7 +1866,16 @@ pub proof fn lemma_cte_swap_bridge_pre_at_implies_neighbors_refine(
             &&& refines_cap(trusted_concrete_slot_view_at(old_heap, next).cap, old_state.slot_cap(next))
         },
 {
-    lemma_cte_swap_bridge_pre_at_implies_spec_pre(old_heap, old_state, slot1, slot2, raw_cap1, raw_cap2);
+    assert(spec_cte_swap_pre(
+        old_state,
+        slot1,
+        slot2,
+        trusted_view_cap(raw_cap1),
+        trusted_view_cap(raw_cap2),
+    ));
+    assert(old_state.wf());
+    assert(trusted_cspace_heap_matches_state_at(old_heap, old_state));
+    assert(trusted_cspace_slot_views_match_state_at(old_heap, old_state));
     lemma_wf_implies_valid_slot_entry(old_state, slot1);
     lemma_wf_implies_valid_slot_entry(old_state, slot2);
     if old_state.slot_entry(slot1).mdb_prev is Some {
@@ -1410,35 +1900,56 @@ pub proof fn lemma_cte_swap_bridge_pre_at_implies_neighbors_refine(
     }
 }
 
-pub proof fn lemma_cte_swap_local_heap_transition_at_implies_post_heap_matches_state_at(
+pub proof fn lemma_cte_swap_local_heap_transition_post_implies_expected_slot_views(
     old_heap: ConcreteHeapId,
     old_state: CSpaceState,
     new_heap: ConcreteHeapId,
     new_state: CSpaceState,
     slot1: SlotId,
     slot2: SlotId,
-    raw_cap1: &cap,
-    raw_cap2: &cap,
+    cap1: CapSpec,
+    cap2: CapSpec,
 )
     requires
+        old_state.has_slot(slot1),
+        old_state.has_slot(slot2),
+        new_state.has_slot(slot1),
+        new_state.has_slot(slot2),
         cte_swap_local_heap_transition_at(old_heap, old_state, new_heap, new_state, slot1, slot2),
-        spec_cte_swap_post(
-            old_state,
-            new_state,
-            slot1,
-            slot2,
-            trusted_view_cap(raw_cap1),
-            trusted_view_cap(raw_cap2),
-        ),
+        spec_cte_swap_post(old_state, new_state, slot1, slot2, cap1, cap2),
     ensures
-        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        trusted_concrete_slot_view_at(new_heap, slot1)
+            == spec_cte_swap_expected_slot1_entry(old_state, slot1, slot2, cap2),
+        trusted_concrete_slot_view_at(new_heap, slot2)
+            == spec_cte_swap_expected_slot2_entry(old_state, slot1, slot2, cap1),
 {
-    lemma_trusted_cspace_local_heap_transition_at_implies_post_heap_matches_state_at(
+    let changed = spec_cte_swap_changed_slots(old_state, slot1, slot2);
+    lemma_cte_swap_post_implies_expected_slot_entries(
+        old_state,
+        new_state,
+        slot1,
+        slot2,
+        cap1,
+        cap2,
+    );
+    lemma_cte_swap_changed_slots_contains_core(old_state, slot1, slot2);
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
         old_heap,
         old_state,
         new_heap,
         new_state,
-        spec_cte_swap_changed_slots(old_state, slot1, slot2),
+        changed,
+        slot1,
+        spec_cte_swap_expected_slot1_entry(old_state, slot1, slot2, cap2),
+    );
+    lemma_trusted_cspace_local_heap_transition_at_and_slot_entry_eq_implies_concrete_slot_eq(
+        old_heap,
+        old_state,
+        new_heap,
+        new_state,
+        changed,
+        slot2,
+        spec_cte_swap_expected_slot2_entry(old_state, slot1, slot2, cap1),
     );
 }
 
@@ -1518,105 +2029,6 @@ pub proof fn lemma_trusted_cspace_cnode_lookups_match_state_implies_cap_lookup_e
     assert(state.cnode_cap_slot_at(cnode_cap, offset) == Some(state.cnode_lookup[obj][offset]));
 }
 
-pub proof fn lemma_resolve_address_bits_bridge_pre_implies_spec_pre(
-    state: CSpaceState,
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-)
-    requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
-    ensures
-        spec_resolve_address_bits_pre(
-            state,
-            trusted_view_cap(raw_root),
-            cap_ptr as int,
-            bits as int,
-        ),
-{
-}
-
-pub proof fn lemma_resolve_address_bits_bridge_pre_implies_root_lookup_ready(
-    state: CSpaceState,
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-)
-    requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
-        trusted_view_cap(raw_root).kind == CapKind::CNodeCap,
-    ensures
-        state.cnode_lookup_wf(),
-        trusted_view_cap(raw_root).cnode is Some,
-        trusted_view_cap(raw_root).object is Some,
-        0 < spec_cnode_level_bits(trusted_view_cap(raw_root)),
-        spec_cnode_cap_lookup_total(state, trusted_view_cap(raw_root)),
-{
-    lemma_resolve_pre_implies_root_lookup_ready(
-        state,
-        trusted_view_cap(raw_root),
-        cap_ptr as int,
-        bits as int,
-    );
-}
-
-pub proof fn lemma_resolve_address_bits_bridge_pre_implies_heap_bridge(
-    state: CSpaceState,
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-)
-    requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
-    ensures
-        trusted_cspace_heap_matches_state(state),
-        trusted_cspace_slot_views_match_state(state),
-        trusted_cspace_cnode_lookups_match_state(state),
-{
-}
-
-pub proof fn lemma_resolve_address_bits_bridge_pre_implies_root_concrete_lookup_entry(
-    state: CSpaceState,
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-    offset: int,
-)
-    requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
-        trusted_view_cap(raw_root).kind == CapKind::CNodeCap,
-        trusted_view_cap(raw_root).object is Some,
-        state.cnode_lookup.dom().contains(trusted_view_cap(raw_root).object.unwrap()),
-        state.cnode_lookup[trusted_view_cap(raw_root).object.unwrap()].dom().contains(offset),
-    ensures
-        state.cnode_cap_slot_at(trusted_view_cap(raw_root), offset) == Some(
-            trusted_concrete_cnode_lookup_slot(trusted_view_cap(raw_root).object.unwrap(), offset),
-        ),
-{
-    lemma_trusted_cspace_cnode_lookups_match_state_implies_cap_lookup_entry(
-        state,
-        trusted_view_cap(raw_root),
-        offset,
-    );
-}
-
-pub proof fn lemma_resolve_address_bits_bridge_pre_implies_concrete_slot_view_refines(
-    state: CSpaceState,
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-    slot: SlotId,
-)
-    requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
-        state.has_slot(slot),
-    ensures
-        refines_cte(trusted_concrete_slot_view(slot), state.slot_entry(slot)),
-        refines_cap(trusted_concrete_slot_view(slot).cap, state.slot_cap(slot)),
-{
-    lemma_trusted_cspace_slot_views_match_state_implies_slot_refines(state, slot);
-}
-
 pub open spec fn resolve_address_bits_bridge_pre(
     state: CSpaceState,
     raw_root: &cap,
@@ -1663,17 +2075,19 @@ pub open spec fn resolve_address_bits_one_step_refines_state(
         concrete_view == resolve_address_bits_fault_core(bits as int)
     } else {
         let level_bits = spec_cnode_level_bits(root_cap);
+        // Mirror the l4v control-flow skeleton: identify the next slot before
+        // dispatching guard/depth/success cases.
+        let next_slot = spec_resolve_address_bits_next_slot(
+            state,
+            root_cap,
+            cap_ptr as int,
+            bits as int,
+        );
         if !spec_resolve_guard_matches(root_cap, cap_ptr as int, bits as int) {
             concrete_view == resolve_address_bits_fault_core(bits as int)
         } else if level_bits > bits as int {
             concrete_view == resolve_address_bits_fault_core(bits as int)
         } else {
-            let next_slot = spec_resolve_address_bits_next_slot(
-                state,
-                root_cap,
-                cap_ptr as int,
-                bits as int,
-            );
             next_slot is Some
             && state.has_slot(next_slot.unwrap())
             && {
@@ -1743,11 +2157,17 @@ pub proof fn lemma_resolve_address_bits_one_step_refines_state_implies_core_refi
             concrete_view,
         ));
     } else {
-        lemma_resolve_address_bits_bridge_pre_implies_root_lookup_ready(
+        assert(spec_resolve_address_bits_pre(
             state,
-            raw_root,
-            cap_ptr,
-            bits,
+            root_cap,
+            cap_ptr as int,
+            bits as int,
+        ));
+        lemma_resolve_pre_implies_root_lookup_ready(
+            state,
+            root_cap,
+            cap_ptr as int,
+            bits as int,
         );
         let level_bits = spec_cnode_level_bits(root_cap);
         if !spec_resolve_guard_matches(root_cap, cap_ptr as int, bits as int) {
@@ -2283,77 +2703,237 @@ pub proof fn lemma_resolve_address_bits_expected_core_refines_state(
     );
 }
 
-#[verifier::external_body]
-pub fn trusted_call_resolve_address_bits(
-    raw_root: &cap,
-    cap_ptr: usize,
-    bits: usize,
-    Ghost(state): Ghost<CSpaceState>,
-) -> (ret: resolveAddressBits_ret_t)
+pub proof fn lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+    state: CSpaceState,
+    root_cap: CapSpec,
+    cap_ptr: int,
+    bits: int,
+    result: ResolveAddressBitsResultSpec,
+)
     requires
-        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
+        0 <= cap_ptr,
+        0 <= bits,
+        valid_cap(root_cap),
+        spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result),
     ensures
-        resolve_address_bits_one_step_refines_state(
+        project_resolve_address_bits_result_core(result)
+            == resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits),
+    decreases bits,
+{
+    let expected = resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits);
+    assert(spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits));
+    if result.status == ResolveAddressBitsStatusSpec::Success {
+        assert(result.slot is Some);
+        assert(result.fault is None);
+        let slot = result.slot.unwrap();
+        let bits_left = result.bits_remaining;
+        assert(state.has_slot(slot));
+        assert(spec_resolve_address_bits_success(
             state,
-            raw_root,
+            root_cap,
             cap_ptr,
             bits,
-            trusted_view_resolve_address_bits_ret(&ret),
-        ),
-{
-    crate::cte::resolve_address_bits(raw_root, cap_ptr, bits)
+            slot,
+            bits_left,
+        ));
+        if !(root_cap.kind == CapKind::CNodeCap
+            && root_cap.cnode is Some
+            && root_cap.object is Some) {
+            assert(false);
+        } else {
+            let level_bits = spec_cnode_level_bits(root_cap);
+            let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+            assert(0 <= root_cap.cnode->Some_0.radix_bits);
+            assert(0 <= root_cap.cnode->Some_0.guard_size);
+            assert(0 < level_bits);
+            assert(spec_resolve_guard_matches(root_cap, cap_ptr, bits));
+            assert(level_bits <= bits);
+            assert(next_slot is Some);
+            let next = next_slot.unwrap();
+            assert(state.has_slot(next));
+            if bits == level_bits {
+                assert(slot == next);
+                assert(bits_left == 0);
+                assert(expected == resolve_address_bits_success_core(next, 0));
+            } else {
+                let remaining = bits - level_bits;
+                let next_cap = state.slot_cap(next);
+                if next_cap.kind == CapKind::CNodeCap {
+                    lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+                    lemma_wf_implies_valid_slot_entry(state, next);
+                    assert(valid_cap(next_cap));
+                    assert(next_cap.cnode is Some);
+                    assert(next_cap.object is Some);
+                    assert(0 < spec_cnode_level_bits(next_cap));
+                    assert(0 <= remaining <= cspace_word_bits());
+                    lemma_cspace_lookup_total_implies_cnode_lookup_total(state, next);
+                    lemma_resolve_address_bits_success_implies_bits_left_in_range(
+                        state,
+                        next_cap,
+                        cap_ptr,
+                        remaining,
+                        slot,
+                        bits_left,
+                    );
+                    assert(spec_resolve_address_bits_pre(state, next_cap, cap_ptr, remaining));
+                    lemma_resolve_address_bits_success_result_implies_contract(
+                        state,
+                        next_cap,
+                        cap_ptr,
+                        remaining,
+                        slot,
+                        bits_left,
+                    );
+                    assert(result == ResolveAddressBitsResultSpec {
+                        status: ResolveAddressBitsStatusSpec::Success,
+                        slot: Some(slot),
+                        bits_remaining: bits_left,
+                        fault: None,
+                    });
+                    assert(spec_resolve_address_bits(state, next_cap, cap_ptr, remaining, result));
+                    lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+                        state,
+                        next_cap,
+                        cap_ptr,
+                        remaining,
+                        result,
+                    );
+                    assert(expected == resolve_address_bits_expected_core_from_cap(
+                        state,
+                        next_cap,
+                        cap_ptr,
+                        remaining,
+                    ));
+                } else {
+                    assert(slot == next);
+                    assert(bits_left == remaining);
+                    assert(expected == resolve_address_bits_success_core(next, remaining));
+                }
+            }
+        }
+    } else {
+        assert(result.status == ResolveAddressBitsStatusSpec::LookupFault);
+        assert(spec_resolve_address_bits_fault(state, root_cap, cap_ptr, bits, result));
+        if !(root_cap.kind == CapKind::CNodeCap
+            && root_cap.cnode is Some
+            && root_cap.object is Some) {
+            assert(expected == resolve_address_bits_fault_core(bits));
+        } else {
+            let level_bits = spec_cnode_level_bits(root_cap);
+            let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+            assert(0 <= root_cap.cnode->Some_0.radix_bits);
+            assert(0 <= root_cap.cnode->Some_0.guard_size);
+            assert(0 < level_bits);
+            if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+                assert(expected == resolve_address_bits_fault_core(bits));
+            } else if level_bits > bits {
+                assert(expected == resolve_address_bits_fault_core(bits));
+            } else {
+                assert(next_slot is Some);
+                let next = next_slot.unwrap();
+                assert(state.has_slot(next));
+                if bits == level_bits {
+                    assert(false);
+                } else {
+                    let remaining = bits - level_bits;
+                    let next_cap = state.slot_cap(next);
+                    if next_cap.kind == CapKind::CNodeCap {
+                        lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+                        lemma_wf_implies_valid_slot_entry(state, next);
+                        assert(valid_cap(next_cap));
+                        assert(next_cap.cnode is Some);
+                        assert(next_cap.object is Some);
+                        assert(0 < spec_cnode_level_bits(next_cap));
+                        assert(0 <= remaining <= cspace_word_bits());
+                        lemma_cspace_lookup_total_implies_cnode_lookup_total(state, next);
+                        assert(spec_resolve_address_bits_pre(state, next_cap, cap_ptr, remaining));
+                        lemma_resolve_address_bits_fault_result_implies_contract(
+                            state,
+                            next_cap,
+                            cap_ptr,
+                            remaining,
+                            result,
+                        );
+                        lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+                            state,
+                            next_cap,
+                            cap_ptr,
+                            remaining,
+                            result,
+                        );
+                        assert(expected == resolve_address_bits_expected_core_from_cap(
+                            state,
+                            next_cap,
+                            cap_ptr,
+                            remaining,
+                        ));
+                    } else {
+                        assert(false);
+                    }
+                }
+            }
+        }
+    }
+    assert(project_resolve_address_bits_result_core(result) == expected);
 }
 
-pub fn resolve_address_bits_refined(
+pub proof fn lemma_resolve_address_bits_core_refines_cap_implies_expected_core_from_cap(
+    state: CSpaceState,
+    root_cap: CapSpec,
+    cap_ptr: int,
+    bits: int,
+    concrete_view: ResolveAddressBitsRetCoreSpec,
+)
+    requires
+        valid_cap(root_cap),
+        spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
+        resolve_address_bits_core_refines_cap(state, root_cap, cap_ptr, bits, concrete_view),
+    ensures
+        concrete_view == resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits),
+{
+    let result = choose|result: ResolveAddressBitsResultSpec|
+        spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result)
+            && refines_resolve_address_bits_ret(concrete_view, result);
+    assert(spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result));
+    assert(refines_resolve_address_bits_ret(concrete_view, result));
+    lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+        state,
+        root_cap,
+        cap_ptr,
+        bits,
+        result,
+    );
+    assert(concrete_view == project_resolve_address_bits_result_core(result));
+    assert(concrete_view == resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits));
+}
+
+pub proof fn lemma_resolve_address_bits_core_refines_state_implies_expected_core(
+    state: CSpaceState,
     raw_root: &cap,
     cap_ptr: usize,
     bits: usize,
-    Ghost(state): Ghost<CSpaceState>,
-) -> (ret: ResolveAddressBitsRetBridge)
+    concrete_view: ResolveAddressBitsRetCoreSpec,
+)
     requires
         resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
+        resolve_address_bits_core_refines_state(state, raw_root, cap_ptr, bits, concrete_view),
     ensures
-        ret.wf(),
-        resolve_address_bits_core_refines_state(
-            state,
-            raw_root,
-            cap_ptr,
-            bits,
-            ret.view(),
-        ),
+        concrete_view == resolve_address_bits_expected_core(state, raw_root, cap_ptr, bits),
 {
-    let raw_ret = trusted_call_resolve_address_bits(
-        raw_root,
-        cap_ptr,
-        bits,
-        Ghost(state),
+    assert(spec_resolve_address_bits_pre(
+        state,
+        trusted_view_cap(raw_root),
+        cap_ptr as int,
+        bits as int,
+    ));
+    assert(valid_cap(trusted_view_cap(raw_root)));
+    lemma_resolve_address_bits_core_refines_cap_implies_expected_core_from_cap(
+        state,
+        trusted_view_cap(raw_root),
+        cap_ptr as int,
+        bits as int,
+        concrete_view,
     );
-    let ret = bridge_resolve_address_bits_ret(&raw_ret);
-    assert(ret.view() == trusted_view_resolve_address_bits_ret(&raw_ret));
-    assert(resolve_address_bits_one_step_refines_state(
-        state,
-        raw_root,
-        cap_ptr,
-        bits,
-        ret.view(),
-    ));
-    proof {
-        lemma_resolve_address_bits_one_step_refines_state_implies_core_refines_state(
-            state,
-            raw_root,
-            cap_ptr,
-            bits,
-            ret.view(),
-        );
-    }
-    assert(resolve_address_bits_core_refines_state(
-        state,
-        raw_root,
-        cap_ptr,
-        bits,
-        ret.view(),
-    ));
-    ret
 }
 
 pub proof fn lemma_resolve_address_bits_result_refines_state(

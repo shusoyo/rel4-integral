@@ -7,6 +7,8 @@ use super::super::abstract_cspace::*;
 #[allow(unused_imports)]
 use super::common::*;
 #[allow(unused_imports)]
+use super::derive::*;
+#[allow(unused_imports)]
 use super::insert::*;
 #[allow(unused_imports)]
 use super::r#move::*;
@@ -171,6 +173,328 @@ pub proof fn cte_insert_smoke_check() {
 	lemma_cte_insert_changed_slots_contains_src_dest(old_state, 2int, 3int);
 	assert(slots_unchanged_except(old_state, new_state, set![2int, 3int]));
 	assert(spec_cte_insert_mdb_shape(old_state, new_state, 2int, 3int, true));
+	assert(new_state.slot_entry(2int) == spec_cte_insert_expected_src_entry(old_state, 2int, 3int, inserted_cap));
+	assert(new_state.slot_entry(3int) == spec_cte_insert_expected_dest_entry(old_state, 2int, 3int, inserted_cap, true));
+}
+
+pub proof fn set_untyped_cap_as_full_smoke_check() {
+	let no_rights = Rights {
+		can_read: false,
+		can_write: false,
+		can_grant: false,
+		can_grant_reply: false,
+	};
+
+	let untyped_object = ObjectRef {
+		id: 7,
+		kind: ObjectKind::Untyped,
+	};
+
+	let src_cap = CapSpec {
+		kind: CapKind::UntypedCap,
+		object: Some(untyped_object),
+		region_id: Some(7),
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: Some(UntypedCapDataSpec {
+			block_size_bits: 6,
+			free_index: 1,
+			is_device: false,
+		}),
+	};
+
+	let inserted_cap = CapSpec {
+		kind: CapKind::UntypedCap,
+		object: Some(untyped_object),
+		region_id: Some(7),
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: Some(UntypedCapDataSpec {
+			block_size_bits: 6,
+			free_index: 0,
+			is_device: false,
+		}),
+	};
+
+	assert(valid_cap(src_cap));
+	assert(valid_cap(inserted_cap));
+	assert(spec_set_untyped_cap_as_full_applies(src_cap, inserted_cap));
+	assert(spec_set_untyped_cap_as_full_result(src_cap, inserted_cap) == CapSpec {
+		kind: CapKind::UntypedCap,
+		object: Some(untyped_object),
+		region_id: Some(7),
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: Some(UntypedCapDataSpec {
+			block_size_bits: 6,
+			free_index: spec_untyped_max_free_index(6),
+			is_device: false,
+		}),
+	});
+	assert(spec_set_untyped_cap_as_full_effect(
+		src_cap,
+		inserted_cap,
+		spec_set_untyped_cap_as_full_result(src_cap, inserted_cap),
+	));
+}
+
+pub proof fn insert_new_cap_smoke_check() {
+	let no_rights = Rights {
+		can_read: false,
+		can_write: false,
+		can_grant: false,
+		can_grant_reply: false,
+	};
+
+	let rw_rights = Rights {
+		can_read: true,
+		can_write: true,
+		can_grant: false,
+		can_grant_reply: false,
+	};
+
+	let r_rights = Rights {
+		can_read: true,
+		can_write: false,
+		can_grant: false,
+		can_grant_reply: false,
+	};
+
+	let root_cnode = ObjectRef {
+		id: 8,
+		kind: ObjectKind::CNode,
+	};
+
+	let endpoint_object = ObjectRef {
+		id: 9,
+		kind: ObjectKind::Endpoint,
+	};
+
+	let root_cap = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(root_cnode),
+		region_id: Some(8),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 4,
+			guard: 0,
+			guard_size: 0,
+		}),
+		untyped: None,
+	};
+
+	let parent_cap = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(9),
+		rights: rw_rights,
+		badge: Some(0),
+		cnode: None,
+		untyped: None,
+	};
+
+	let inserted_cap = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(9),
+		rights: r_rights,
+		badge: Some(0),
+		cnode: None,
+		untyped: None,
+	};
+
+	let null_cap = spec_null_cap();
+
+	let old_state = CSpaceState {
+		slots: map![
+			1int => SlotEntrySpec {
+				cap: root_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			2int => SlotEntrySpec {
+				cap: parent_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			3int => SlotEntrySpec {
+				cap: null_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			}
+		],
+		cnode_slots: map![
+			root_cnode => set![1int, 2int, 3int]
+		],
+		cnode_lookup: map![
+			root_cnode => map![
+				0int => 1int,
+				1int => 2int,
+				2int => 3int
+			]
+		],
+		roots: set![1int],
+	};
+
+	let new_state = CSpaceState {
+		slots: map![
+			1int => SlotEntrySpec {
+				cap: root_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			2int => SlotEntrySpec {
+				cap: parent_cap,
+				mdb_prev: None,
+				mdb_next: Some(3int),
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			3int => SlotEntrySpec {
+				cap: inserted_cap,
+				mdb_prev: Some(2int),
+				mdb_next: None,
+				mdb_revocable: true,
+				mdb_first_badged: true,
+			}
+		],
+		cnode_slots: map![
+			root_cnode => set![1int, 2int, 3int]
+		],
+		cnode_lookup: map![
+			root_cnode => map![
+				0int => 1int,
+				1int => 2int,
+				2int => 3int
+			]
+		],
+		roots: set![1int],
+	};
+
+	assert(spec_cte_insert_derivable(parent_cap, inserted_cap));
+	assert(spec_cte_insert_changed_slots(old_state, 2int, 3int) =~= set![2int, 3int]);
+	lemma_cte_insert_changed_slots_contains_src_dest(old_state, 2int, 3int);
+	assert(slots_unchanged_except(old_state, new_state, set![2int, 3int]));
+	assert(spec_cte_insert_mdb_shape(old_state, new_state, 2int, 3int, true));
+	assert(new_state.slot_entry(2int) == spec_insert_new_cap_expected_parent_entry(old_state, 2int, 3int));
+	assert(new_state.slot_entry(3int) == spec_insert_new_cap_expected_slot_entry(old_state, 2int, 3int, inserted_cap));
+}
+
+pub proof fn derive_cap_smoke_check() {
+	let no_rights = Rights {
+		can_read: false,
+		can_write: false,
+		can_grant: false,
+		can_grant_reply: false,
+	};
+
+	let root_cnode = ObjectRef {
+		id: 20,
+		kind: ObjectKind::CNode,
+	};
+
+	let root_cap = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(root_cnode),
+		region_id: Some(20),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 4,
+			guard: 0,
+			guard_size: 0,
+		}),
+		untyped: None,
+	};
+
+	let untyped_object = ObjectRef {
+		id: 21,
+		kind: ObjectKind::Untyped,
+	};
+
+	let untyped_cap = CapSpec {
+		kind: CapKind::UntypedCap,
+		object: Some(untyped_object),
+		region_id: Some(21),
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: Some(UntypedCapDataSpec {
+			block_size_bits: 6,
+			free_index: 0,
+			is_device: false,
+		}),
+	};
+
+	let blocked_state = CSpaceState {
+		slots: map![
+			1int => SlotEntrySpec {
+				cap: root_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			4int => SlotEntrySpec {
+				cap: untyped_cap,
+				mdb_prev: None,
+				mdb_next: Some(5int),
+				mdb_revocable: true,
+				mdb_first_badged: false,
+			},
+			5int => SlotEntrySpec {
+				cap: untyped_cap,
+				mdb_prev: Some(4int),
+				mdb_next: None,
+				mdb_revocable: true,
+				mdb_first_badged: false,
+			}
+		],
+		cnode_slots: map![
+			root_cnode => set![4int, 5int]
+		],
+		cnode_lookup: map![
+			root_cnode => map![
+				0int => 4int,
+				1int => 5int
+			]
+		],
+		roots: set![1int],
+	};
+
+	assert(blocked_state.ensure_no_children_blocks(4int));
+	assert(spec_derive_cap_returns_syscall_error(blocked_state, 4int, untyped_cap));
+	assert(spec_derive_cap_expected_cap(blocked_state, 4int, untyped_cap) == spec_null_cap());
+
+	let endpoint_object = ObjectRef {
+		id: 22,
+		kind: ObjectKind::Endpoint,
+	};
+
+	let endpoint_cap = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(22),
+		rights: no_rights,
+		badge: Some(0),
+		cnode: None,
+		untyped: None,
+	};
+
+	assert(!spec_derive_cap_returns_syscall_error(blocked_state, 4int, endpoint_cap));
+	assert(spec_derive_cap_expected_cap(blocked_state, 4int, endpoint_cap) == endpoint_cap);
 }
 
 pub proof fn cte_move_smoke_check() {
@@ -371,6 +695,8 @@ pub proof fn cte_move_smoke_check() {
 	lemma_cte_move_changed_slots_contains_neighbors(old_state, 3int, 5int);
 	assert(slots_unchanged_except(old_state, moved_state, set![2int, 3int, 4int, 5int]));
 	assert(spec_cte_move_mdb_shape(old_state, moved_state, 3int, 5int));
+	assert(moved_state.slot_entry(3int) == spec_cte_move_expected_src_entry());
+	assert(moved_state.slot_entry(5int) == spec_cte_move_expected_dest_entry(old_state, 3int, src_cap));
 }
 
 pub proof fn cte_swap_smoke_check() {
@@ -549,6 +875,8 @@ pub proof fn cte_swap_smoke_check() {
 	lemma_cte_swap_changed_slots_contains_neighbors(old_state, 3int, 4int);
 	assert(slots_unchanged_except(old_state, swapped_state, set![2int, 3int, 4int]));
 	assert(spec_cte_swap_mdb_shape(old_state, swapped_state, 3int, 4int));
+	assert(swapped_state.slot_entry(3int) == spec_cte_swap_expected_slot1_entry(old_state, 3int, 4int, cap2));
+	assert(swapped_state.slot_entry(4int) == spec_cte_swap_expected_slot2_entry(old_state, 3int, 4int, cap1));
 }
 
 pub proof fn resolve_address_bits_smoke_check() {
@@ -817,6 +1145,9 @@ pub proof fn resolve_address_bits_smoke_check() {
 
 pub proof fn cspace_ops_smoke_check() {
 	cte_insert_smoke_check();
+	set_untyped_cap_as_full_smoke_check();
+	insert_new_cap_smoke_check();
+	derive_cap_smoke_check();
 	cte_move_smoke_check();
 	cte_swap_smoke_check();
 	resolve_address_bits_smoke_check();

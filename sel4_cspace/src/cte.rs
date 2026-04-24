@@ -22,6 +22,8 @@ use sel4_common::{
     structures::exception_t,
     utils::{convert_to_mut_type_ref, convert_to_type_ref},
 };
+#[cfg(feature = "verify")]
+use vstd::prelude::*;
 
 #[repr(C)]
 #[derive(Clone)]
@@ -47,6 +49,7 @@ impl cte_t {
         convert_to_mut_type_ref::<Self>(self.get_ptr() + core::mem::size_of::<cte_t>() * index)
     }
 
+    #[cfg_attr(feature = "verify", verifier::external)]
     pub fn derive_cap(&self, capability: &cap) -> deriveCap_ret {
         if capability.is_arch_cap() {
             return self.arch_derive_cap(capability);
@@ -82,6 +85,7 @@ impl cte_t {
         ret
     }
     /// 判断当前`cte`是否存在派生出来的子节点
+    #[cfg_attr(feature = "verify", verifier::external)]
     pub fn ensure_no_children(&self) -> exception_t {
         if self.cteMDBNode.get_mdbNext() != 0 {
             let next = convert_to_type_ref::<cte_t>(self.cteMDBNode.get_mdbNext() as usize);
@@ -92,6 +96,7 @@ impl cte_t {
         exception_t::EXCEPTION_NONE
     }
     /// 判断当前`cte`是否为`next`节点的父节点（除了父节点，还有兄弟节点的关系可能）
+    #[cfg_attr(feature = "verify", verifier::external)]
     fn is_mdb_parent_of(&self, next: &Self) -> bool {
         if self.cteMDBNode.get_mdbRevocable() == 0 {
             return false;
@@ -133,6 +138,7 @@ impl cte_t {
 
     /// 判断当前`cte`是否是能力派生树上的最后一个能力,如果`prev`与当前指向对象，则当前`cte`不是最后一个`cap`
     /// 如果`cte`的`next`是当前`cte`派生出来的能力，则当前`cte`也不是最后一个`cap`
+    #[cfg_attr(feature = "verify", verifier::external)]
     pub fn is_final_cap(&self) -> bool {
         let mdb = &self.cteMDBNode;
         let prev_is_same_obj = if mdb.get_mdbPrev() == 0 {
@@ -153,6 +159,7 @@ impl cte_t {
         }
     }
 
+    #[cfg_attr(feature = "verify", verifier::external)]
     pub fn is_long_running_delete(&self) -> bool {
         if self.capability.get_tag() == cap_tag::cap_null_cap || !self.is_final_cap() {
             return false;
@@ -361,6 +368,7 @@ impl cte_t {
 /// 将一个cap插入slot中并维护能力派生树
 ///
 /// 将一个new_cap插入到dest slot中并作为src slot的派生子节点插入派生树中
+#[cfg_attr(feature = "verify", verifier::external)]
 pub fn cte_insert(new_cap: &cap, src_slot: &mut cte_t, dest_slot: &mut cte_t) {
     let srcMDB = &mut src_slot.cteMDBNode;
     let srcCap = &(src_slot.capability.clone());
@@ -391,6 +399,7 @@ pub fn cte_insert(new_cap: &cap, src_slot: &mut cte_t, dest_slot: &mut cte_t) {
 }
 
 /// insert a new cap to slot, set parent's next is slot.
+#[cfg_attr(feature = "verify", verifier::external)]
 pub fn insert_new_cap(parent: &mut cte_t, slot: &mut cte_t, capability: &cap) {
     let next = parent.cteMDBNode.get_mdbNext() as usize;
     slot.capability = capability.clone();
@@ -405,6 +414,7 @@ pub fn insert_new_cap(parent: &mut cte_t, slot: &mut cte_t, capability: &cap) {
 /// 将一个cap插入slot中并删除原节点
 ///
 /// 将一个new_cap插入到dest slot中并作为替代src slot在派生树中的位置
+#[cfg_attr(feature = "verify", verifier::external)]
 pub fn cte_move(new_cap: &cap, src_slot: &mut cte_t, dest_slot: &mut cte_t) {
     /* Haskell error: "cteInsert to non-empty destination" */
     assert_eq!(dest_slot.capability.get_tag(), cap_tag::cap_null_cap);
@@ -433,6 +443,7 @@ pub fn cte_move(new_cap: &cap, src_slot: &mut cte_t, dest_slot: &mut cte_t) {
 }
 
 /// 交换两个slot，并将新的cap数据填入
+#[cfg_attr(feature = "verify", verifier::external)]
 pub fn cte_swap(cap1: &cap, slot1: &mut cte_t, cap2: &cap, slot2: &mut cte_t) {
     let mdb1 = slot1.cteMDBNode.clone();
     let mdb2 = slot2.cteMDBNode.clone();
@@ -492,6 +503,7 @@ fn cap_removable(capability: &cap, slot: *mut cte_t) -> bool {
 
 /// 如果`srcCap`和`newCap`都是`UntypedCap`，并且指向同一块内存，内存大小也相同，就将`srcCap`记录为没有剩余空间。
 /// 自我认为是防止同一块内存空间被分配两次
+#[cfg_attr(feature = "verify", verifier::external_body)]
 fn set_untyped_cap_as_full(srcCap: &cap, newCap: &cap, srcSlot: &mut cte_t) {
     if srcCap.get_tag() == cap_tag::cap_untyped_cap && newCap.get_tag() == cap_tag::cap_untyped_cap
     {
@@ -513,6 +525,7 @@ fn set_untyped_cap_as_full(srcCap: &cap, newCap: &cap, srcSlot: &mut cte_t) {
 ///
 /// Parse cap_ptr ,get a capbility from cnode.
 #[allow(unreachable_code)]
+#[cfg_attr(feature = "verify", verifier::external)]
 pub fn resolve_address_bits(
     node_cap: &cap,
     cap_ptr: usize,
@@ -563,3 +576,1592 @@ pub fn resolve_address_bits(
     }
     panic!("UNREACHABLE");
 }
+
+#[cfg(feature = "verify")]
+verus! {
+
+#[allow(unused_imports)]
+use crate::refinement_bridge::*;
+#[allow(unused_imports)]
+use crate::specs::abstract_cspace::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::derive::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::insert::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::r#move::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::resolve::*;
+#[allow(unused_imports)]
+use crate::specs::cspace_ops::swap::*;
+
+pub open spec fn cte_insert_exec_contract(
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    src: SlotId,
+    dest: SlotId,
+    raw_new_cap: &cap,
+    new_cap_is_revocable: bool,
+) -> bool {
+    &&& trusted_cspace_heap_matches_state_at(new_heap, new_state)
+    &&& spec_cte_insert(
+        old_state,
+        new_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+        new_cap_is_revocable,
+    )
+    &&& new_state.slot_entry(src)
+        == spec_cte_insert_expected_src_entry(
+            old_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+        )
+    &&& new_state.slot_entry(dest)
+        == spec_cte_insert_expected_dest_entry(
+            old_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+            new_cap_is_revocable,
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, src)
+        == spec_cte_insert_expected_src_entry(
+            old_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, dest)
+        == spec_cte_insert_expected_dest_entry(
+            old_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+            new_cap_is_revocable,
+        )
+}
+
+pub open spec fn insert_new_cap_exec_contract(
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    parent: SlotId,
+    slot: SlotId,
+    raw_new_cap: &cap,
+) -> bool {
+    &&& trusted_cspace_heap_matches_state_at(new_heap, new_state)
+    &&& spec_insert_new_cap(
+        old_state,
+        new_state,
+        parent,
+        slot,
+        trusted_view_cap(raw_new_cap),
+    )
+    &&& new_state.slot_entry(parent)
+        == spec_insert_new_cap_expected_parent_entry(
+            old_state,
+            parent,
+            slot,
+        )
+    &&& new_state.slot_entry(slot)
+        == spec_insert_new_cap_expected_slot_entry(
+            old_state,
+            parent,
+            slot,
+            trusted_view_cap(raw_new_cap),
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, parent)
+        == spec_insert_new_cap_expected_parent_entry(
+            old_state,
+            parent,
+            slot,
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, slot)
+        == spec_insert_new_cap_expected_slot_entry(
+            old_state,
+            parent,
+            slot,
+            trusted_view_cap(raw_new_cap),
+        )
+}
+
+pub open spec fn cte_move_exec_contract(
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    src: SlotId,
+    dest: SlotId,
+    raw_new_cap: &cap,
+) -> bool {
+    &&& trusted_cspace_heap_matches_state_at(new_heap, new_state)
+    &&& spec_cte_move(
+        old_state,
+        new_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+    )
+    &&& new_state.slot_entry(src) == spec_cte_move_expected_src_entry()
+    &&& new_state.slot_entry(dest)
+        == spec_cte_move_expected_dest_entry(
+            old_state,
+            src,
+            trusted_view_cap(raw_new_cap),
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, src) == spec_cte_move_expected_src_entry()
+    &&& trusted_concrete_slot_view_at(new_heap, dest)
+        == spec_cte_move_expected_dest_entry(
+            old_state,
+            src,
+            trusted_view_cap(raw_new_cap),
+        )
+}
+
+pub open spec fn cte_swap_exec_contract(
+    old_state: CSpaceState,
+    new_heap: ConcreteHeapId,
+    new_state: CSpaceState,
+    slot1_id: SlotId,
+    slot2_id: SlotId,
+    raw_cap1: &cap,
+    raw_cap2: &cap,
+) -> bool {
+    &&& trusted_cspace_heap_matches_state_at(new_heap, new_state)
+    &&& spec_cte_swap(
+        old_state,
+        new_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap1),
+        trusted_view_cap(raw_cap2),
+    )
+    &&& new_state.slot_entry(slot1_id)
+        == spec_cte_swap_expected_slot1_entry(
+            old_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap2),
+        )
+    &&& new_state.slot_entry(slot2_id)
+        == spec_cte_swap_expected_slot2_entry(
+            old_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap1),
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, slot1_id)
+        == spec_cte_swap_expected_slot1_entry(
+            old_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap2),
+        )
+    &&& trusted_concrete_slot_view_at(new_heap, slot2_id)
+        == spec_cte_swap_expected_slot2_entry(
+            old_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap1),
+        )
+}
+
+pub open spec fn resolve_address_bits_exec_contract(
+    state: CSpaceState,
+    raw_root: &cap,
+    cap_ptr: usize,
+    bits: usize,
+    ret: ResolveAddressBitsRetBridge,
+) -> bool {
+    &&& ret.wf()
+    &&& ret.view() == resolve_address_bits_expected_core(state, raw_root, cap_ptr, bits)
+}
+
+pub open spec fn derive_cap_exec_contract(
+    state: CSpaceState,
+    slot: SlotId,
+    raw_capability: &cap,
+    ret: &deriveCap_ret,
+) -> bool {
+    &&& spec_derive_cap_post(
+        state,
+        slot,
+        trusted_view_cap(raw_capability),
+        trusted_view_derive_cap_ret_capability(ret),
+    )
+    &&& spec_derive_cap_returns_syscall_error(
+        state,
+        slot,
+        trusted_view_cap(raw_capability),
+    ) ==> trusted_derive_cap_ret_is_syscall_error(ret)
+    &&& !spec_derive_cap_returns_syscall_error(
+        state,
+        slot,
+        trusted_view_cap(raw_capability),
+    ) ==> trusted_derive_cap_ret_is_none(ret)
+}
+
+pub open spec fn is_mdb_parent_of_exec_contract(
+    state: CSpaceState,
+    parent: SlotId,
+    child: SlotId,
+    ret: bool,
+) -> bool {
+    ret == state.mdb_parent_of(parent, child)
+}
+
+pub open spec fn is_final_cap_exec_contract(
+    state: CSpaceState,
+    slot: SlotId,
+    ret: bool,
+) -> bool {
+    ret == state.is_final_cap(slot)
+}
+
+pub open spec fn is_long_running_delete_exec_contract(
+    state: CSpaceState,
+    slot: SlotId,
+    ret: bool,
+) -> bool {
+    ret == state.slot_cap_long_running_delete(slot)
+}
+
+pub open spec fn ensure_no_children_exec_contract(
+    state: CSpaceState,
+    slot: SlotId,
+    ret: exception_t,
+) -> bool {
+    &&& state.ensure_no_children_blocks(slot) ==> trusted_exception_is_syscall_error(ret)
+    &&& !state.ensure_no_children_blocks(slot) ==> trusted_exception_is_none(ret)
+}
+
+pub assume_specification[cte_t::ensure_no_children](me: &cte_t) -> (ret: exception_t)
+    ensures
+        forall|heap: ConcreteHeapId, state: CSpaceState, slot: SlotId| #![auto]
+            is_final_cap_call_pre_at(heap, state, slot, me)
+                ==> ensure_no_children_exec_contract(state, slot, ret),
+;
+
+pub assume_specification[cte_t::is_mdb_parent_of](
+    me: &cte_t,
+    next: &cte_t,
+) -> (ret: bool)
+    ensures
+        forall|heap: ConcreteHeapId, state: CSpaceState, parent: SlotId, child: SlotId| #![auto]
+            is_mdb_parent_of_call_pre_at(heap, state, parent, child, me, next)
+                ==> is_mdb_parent_of_exec_contract(state, parent, child, ret),
+;
+
+pub assume_specification[cte_t::is_final_cap](me: &cte_t) -> (ret: bool)
+    ensures
+        forall|heap: ConcreteHeapId, state: CSpaceState, slot: SlotId| #![auto]
+            is_final_cap_call_pre_at(heap, state, slot, me)
+                ==> is_final_cap_exec_contract(state, slot, ret),
+;
+
+pub assume_specification[resolve_address_bits](
+    node_cap: &cap,
+    cap_ptr: usize,
+    bits: usize,
+) -> (ret: resolveAddressBits_ret_t)
+    ensures
+        forall|state: CSpaceState| #![auto]
+            resolve_address_bits_bridge_pre(state, node_cap, cap_ptr, bits)
+                ==> trusted_view_resolve_address_bits_ret(&ret)
+                    == resolve_address_bits_expected_core(state, node_cap, cap_ptr, bits),
+;
+
+pub assume_specification[cte_insert](
+    new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+)
+    ensures
+        forall|old_heap: ConcreteHeapId,
+               old_state: CSpaceState,
+               new_heap: ConcreteHeapId,
+               new_state: CSpaceState,
+               src: SlotId,
+               dest: SlotId,
+               new_cap_is_revocable: bool| #![auto]
+            old_state.has_slot(src)
+                && old_state.has_slot(dest)
+                && new_state.has_slot(src)
+                && new_state.has_slot(dest)
+                && cte_insert_call_pre_at(
+                    old_heap,
+                    old_state,
+                    src,
+                    dest,
+                    new_cap,
+                    old(src_slot),
+                    old(dest_slot),
+                )
+                && spec_cte_insert_post(
+                    old_state,
+                    new_state,
+                    src,
+                    dest,
+                    trusted_view_cap(new_cap),
+                    new_cap_is_revocable,
+                )
+                ==> cte_insert_exec_contract(
+                    old_state,
+                    new_heap,
+                    new_state,
+                    src,
+                    dest,
+                    new_cap,
+                    new_cap_is_revocable,
+                ),
+;
+
+pub assume_specification[insert_new_cap](
+    parent: &mut cte_t,
+    slot: &mut cte_t,
+    capability: &cap,
+)
+    ensures
+        forall|old_heap: ConcreteHeapId,
+               old_state: CSpaceState,
+               new_heap: ConcreteHeapId,
+               new_state: CSpaceState,
+               parent_id: SlotId,
+               slot_id: SlotId| #![auto]
+            old_state.has_slot(parent_id)
+                && old_state.has_slot(slot_id)
+                && new_state.has_slot(parent_id)
+                && new_state.has_slot(slot_id)
+                && insert_new_cap_call_pre_at(
+                    old_heap,
+                    old_state,
+                    parent_id,
+                    slot_id,
+                    capability,
+                    old(parent),
+                    old(slot),
+                )
+                && spec_insert_new_cap_post(
+                    old_state,
+                    new_state,
+                    parent_id,
+                    slot_id,
+                    trusted_view_cap(capability),
+                )
+                ==> insert_new_cap_exec_contract(
+                    old_state,
+                    new_heap,
+                    new_state,
+                    parent_id,
+                    slot_id,
+                    capability,
+                ),
+;
+
+pub assume_specification[cte_move](
+    new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+)
+    ensures
+        forall|old_heap: ConcreteHeapId,
+               old_state: CSpaceState,
+               new_heap: ConcreteHeapId,
+               new_state: CSpaceState,
+               src: SlotId,
+               dest: SlotId| #![auto]
+            old_state.has_slot(src)
+                && old_state.has_slot(dest)
+                && new_state.has_slot(src)
+                && new_state.has_slot(dest)
+                && cte_move_call_pre_at(
+                    old_heap,
+                    old_state,
+                    src,
+                    dest,
+                    new_cap,
+                    old(src_slot),
+                    old(dest_slot),
+                )
+                && spec_cte_move_post(
+                    old_state,
+                    new_state,
+                    src,
+                    dest,
+                    trusted_view_cap(new_cap),
+                )
+                ==> cte_move_exec_contract(
+                    old_state,
+                    new_heap,
+                    new_state,
+                    src,
+                    dest,
+                    new_cap,
+                ),
+;
+
+pub assume_specification[cte_swap](
+    cap1: &cap,
+    slot1: &mut cte_t,
+    cap2: &cap,
+    slot2: &mut cte_t,
+)
+    ensures
+        forall|old_heap: ConcreteHeapId,
+               old_state: CSpaceState,
+               new_heap: ConcreteHeapId,
+               new_state: CSpaceState,
+               slot1_id: SlotId,
+               slot2_id: SlotId| #![auto]
+            old_state.has_slot(slot1_id)
+                && old_state.has_slot(slot2_id)
+                && new_state.has_slot(slot1_id)
+                && new_state.has_slot(slot2_id)
+                && cte_swap_call_pre_at(
+                    old_heap,
+                    old_state,
+                    slot1_id,
+                    slot2_id,
+                    cap1,
+                    cap2,
+                    old(slot1),
+                    old(slot2),
+                )
+                && spec_cte_swap_post(
+                    old_state,
+                    new_state,
+                    slot1_id,
+                    slot2_id,
+                    trusted_view_cap(cap1),
+                    trusted_view_cap(cap2),
+                )
+                ==> cte_swap_exec_contract(
+                    old_state,
+                    new_heap,
+                    new_state,
+                    slot1_id,
+                    slot2_id,
+                    cap1,
+                    cap2,
+                ),
+;
+
+fn cte_insert_exec_step(
+    raw_new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(src): Ghost<SlotId>,
+    Ghost(dest): Ghost<SlotId>,
+    Ghost(new_cap_is_revocable): Ghost<bool>,
+)
+    requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
+        cte_insert_call_pre_at(
+            old_heap,
+            old_state,
+            src,
+            dest,
+            raw_new_cap,
+            old(src_slot),
+            old(dest_slot),
+        ),
+        spec_cte_insert_post(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+            new_cap_is_revocable,
+        ),
+    ensures
+        cte_insert_exec_contract(
+            old_state,
+            new_heap,
+            new_state,
+            src,
+            dest,
+            raw_new_cap,
+            new_cap_is_revocable,
+        ),
+{
+    crate::cte::cte_insert(raw_new_cap, src_slot, dest_slot);
+    assert(cte_insert_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        src,
+        dest,
+        raw_new_cap,
+        new_cap_is_revocable,
+    ));
+}
+
+fn is_final_cap_exec_step(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        is_final_cap_exec_contract(state, slot, ret),
+{
+    let ret = raw_slot.is_final_cap();
+    assert(is_final_cap_exec_contract(state, slot, ret));
+    ret
+}
+
+fn is_long_running_delete_exec_step(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        is_long_running_delete_exec_contract(state, slot, ret),
+{
+    let ret = is_long_running_delete_via_is_final_cap_refined(
+        raw_slot,
+        Ghost(heap),
+        Ghost(state),
+        Ghost(slot),
+    );
+    assert(is_long_running_delete_exec_contract(state, slot, ret));
+    ret
+}
+
+fn ensure_no_children_exec_step(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: exception_t)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        ensure_no_children_exec_contract(state, slot, ret),
+{
+    let ret = raw_slot.ensure_no_children();
+    assert(ensure_no_children_exec_contract(state, slot, ret));
+    ret
+}
+
+fn derive_cap_exec_step(
+    raw_slot: &cte_t,
+    raw_capability: &cap,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: deriveCap_ret)
+    requires
+        derive_cap_call_pre_at(heap, state, slot, raw_slot, raw_capability),
+    ensures
+        derive_cap_exec_contract(state, slot, raw_capability, &ret),
+{
+    let ret = derive_cap_via_ensure_no_children_refined(
+        raw_slot,
+        raw_capability,
+        Ghost(heap),
+        Ghost(state),
+        Ghost(slot),
+    );
+    assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+    ret
+}
+
+fn is_mdb_parent_of_exec_step(
+    raw_parent: &cte_t,
+    raw_child: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(parent): Ghost<SlotId>,
+    Ghost(child): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_mdb_parent_of_call_pre_at(heap, state, parent, child, raw_parent, raw_child),
+    ensures
+        is_mdb_parent_of_exec_contract(state, parent, child, ret),
+{
+    let ret = raw_parent.is_mdb_parent_of(raw_child);
+    assert(is_mdb_parent_of_exec_contract(state, parent, child, ret));
+    ret
+}
+
+fn insert_new_cap_exec_step(
+    parent_slot: &mut cte_t,
+    slot_ref: &mut cte_t,
+    raw_new_cap: &cap,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(parent): Ghost<SlotId>,
+    Ghost(slot): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(parent),
+        old_state.has_slot(slot),
+        new_state.has_slot(parent),
+        new_state.has_slot(slot),
+        insert_new_cap_call_pre_at(
+            old_heap,
+            old_state,
+            parent,
+            slot,
+            raw_new_cap,
+            old(parent_slot),
+            old(slot_ref),
+        ),
+        spec_insert_new_cap_post(
+            old_state,
+            new_state,
+            parent,
+            slot,
+            trusted_view_cap(raw_new_cap),
+        ),
+    ensures
+        insert_new_cap_exec_contract(
+            old_state,
+            new_heap,
+            new_state,
+            parent,
+            slot,
+            raw_new_cap,
+        ),
+{
+    crate::cte::insert_new_cap(parent_slot, slot_ref, raw_new_cap);
+    assert(insert_new_cap_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        parent,
+        slot,
+        raw_new_cap,
+    ));
+}
+
+fn cte_move_exec_step(
+    raw_new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(src): Ghost<SlotId>,
+    Ghost(dest): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
+        cte_move_call_pre_at(
+            old_heap,
+            old_state,
+            src,
+            dest,
+            raw_new_cap,
+            old(src_slot),
+            old(dest_slot),
+        ),
+        spec_cte_move_post(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+        ),
+    ensures
+        cte_move_exec_contract(
+            old_state,
+            new_heap,
+            new_state,
+            src,
+            dest,
+            raw_new_cap,
+        ),
+{
+    crate::cte::cte_move(raw_new_cap, src_slot, dest_slot);
+    assert(cte_move_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        src,
+        dest,
+        raw_new_cap,
+    ));
+}
+
+fn cte_swap_exec_step(
+    raw_cap1: &cap,
+    slot1: &mut cte_t,
+    raw_cap2: &cap,
+    slot2: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(slot1_id): Ghost<SlotId>,
+    Ghost(slot2_id): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(slot1_id),
+        old_state.has_slot(slot2_id),
+        new_state.has_slot(slot1_id),
+        new_state.has_slot(slot2_id),
+        cte_swap_call_pre_at(
+            old_heap,
+            old_state,
+            slot1_id,
+            slot2_id,
+            raw_cap1,
+            raw_cap2,
+            old(slot1),
+            old(slot2),
+        ),
+        spec_cte_swap_post(
+            old_state,
+            new_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap1),
+            trusted_view_cap(raw_cap2),
+        ),
+    ensures
+        cte_swap_exec_contract(
+            old_state,
+            new_heap,
+            new_state,
+            slot1_id,
+            slot2_id,
+            raw_cap1,
+            raw_cap2,
+        ),
+{
+    crate::cte::cte_swap(raw_cap1, slot1, raw_cap2, slot2);
+    assert(cte_swap_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        slot1_id,
+        slot2_id,
+        raw_cap1,
+        raw_cap2,
+    ));
+}
+
+fn resolve_address_bits_exec_step(
+    raw_root: &cap,
+    cap_ptr: usize,
+    bits: usize,
+    Ghost(state): Ghost<CSpaceState>,
+) -> (ret: ResolveAddressBitsRetBridge)
+    requires
+        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
+    ensures
+        resolve_address_bits_exec_contract(state, raw_root, cap_ptr, bits, ret),
+{
+    let raw_ret = crate::cte::resolve_address_bits(raw_root, cap_ptr, bits);
+    let ret = bridge_resolve_address_bits_ret(&raw_ret);
+    assert(ret.view() == trusted_view_resolve_address_bits_ret(&raw_ret));
+    assert(ret.view() == resolve_address_bits_expected_core(state, raw_root, cap_ptr, bits));
+    ret
+}
+
+pub fn cte_insert_refined(
+    raw_new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(src): Ghost<SlotId>,
+    Ghost(dest): Ghost<SlotId>,
+    Ghost(new_cap_is_revocable): Ghost<bool>,
+)
+    requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
+        cte_insert_call_pre_at(old_heap, old_state, src, dest, raw_new_cap, old(src_slot), old(dest_slot)),
+        spec_cte_insert_post(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+            new_cap_is_revocable,
+        ),
+    ensures
+        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        spec_cte_insert(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+            new_cap_is_revocable,
+        ),
+        new_state.slot_entry(src)
+            == spec_cte_insert_expected_src_entry(
+                old_state,
+                src,
+                dest,
+                trusted_view_cap(raw_new_cap),
+            ),
+        new_state.slot_entry(dest)
+            == spec_cte_insert_expected_dest_entry(
+                old_state,
+                src,
+                dest,
+                trusted_view_cap(raw_new_cap),
+                new_cap_is_revocable,
+            ),
+        trusted_concrete_slot_view_at(new_heap, src)
+            == spec_cte_insert_expected_src_entry(
+                old_state,
+                src,
+                dest,
+                trusted_view_cap(raw_new_cap),
+            ),
+        trusted_concrete_slot_view_at(new_heap, dest)
+            == spec_cte_insert_expected_dest_entry(
+                old_state,
+                src,
+                dest,
+                trusted_view_cap(raw_new_cap),
+                new_cap_is_revocable,
+            ),
+{
+    cte_insert_exec_step(
+        raw_new_cap,
+        src_slot,
+        dest_slot,
+        Ghost(old_heap),
+        Ghost(old_state),
+        Ghost(new_heap),
+        Ghost(new_state),
+        Ghost(src),
+        Ghost(dest),
+        Ghost(new_cap_is_revocable),
+    );
+    assert(cte_insert_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        src,
+        dest,
+        raw_new_cap,
+        new_cap_is_revocable,
+    ));
+    assert(trusted_cspace_heap_matches_state_at(new_heap, new_state));
+    assert(spec_cte_insert(
+        old_state,
+        new_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+        new_cap_is_revocable,
+    ));
+    assert(new_state.slot_entry(src) == spec_cte_insert_expected_src_entry(
+        old_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(new_state.slot_entry(dest) == spec_cte_insert_expected_dest_entry(
+        old_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+        new_cap_is_revocable,
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, src) == spec_cte_insert_expected_src_entry(
+        old_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, dest) == spec_cte_insert_expected_dest_entry(
+        old_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+        new_cap_is_revocable,
+    ));
+}
+
+pub fn is_final_cap_refined(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        is_final_cap_exec_contract(state, slot, ret),
+{
+    let ret = is_final_cap_exec_step(raw_slot, Ghost(heap), Ghost(state), Ghost(slot));
+    assert(is_final_cap_exec_contract(state, slot, ret));
+    ret
+}
+
+pub fn is_long_running_delete_refined(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        is_long_running_delete_exec_contract(state, slot, ret),
+{
+    let ret = is_long_running_delete_exec_step(raw_slot, Ghost(heap), Ghost(state), Ghost(slot));
+    ret
+}
+
+pub fn ensure_no_children_refined(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: exception_t)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        ensure_no_children_exec_contract(state, slot, ret),
+{
+    let ret = ensure_no_children_exec_step(raw_slot, Ghost(heap), Ghost(state), Ghost(slot));
+    assert(ensure_no_children_exec_contract(state, slot, ret));
+    ret
+}
+
+pub fn ensure_no_children_via_is_mdb_parent_of_refined(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: exception_t)
+    requires
+        state.wf(),
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        ensure_no_children_exec_contract(state, slot, ret),
+        trusted_exception_is_none(ret) == !state.ensure_no_children_blocks(slot),
+        trusted_exception_is_syscall_error(ret) == state.ensure_no_children_blocks(slot),
+{
+    proof {
+        lemma_is_final_cap_call_pre_at_implies_raw_slot_view_matches_state(
+            heap,
+            state,
+            slot,
+            raw_slot,
+        );
+    }
+    let has_next = trusted_has_mdb_next(raw_slot);
+    if has_next {
+        proof {
+            lemma_wf_implies_valid_slot_entry(state, slot);
+            assert(trusted_view_cte(raw_slot).mdb_next is Some);
+            assert(state.slot_entry(slot).mdb_next is Some);
+            assert(state.has_slot(state.slot_entry(slot).mdb_next.unwrap()));
+        }
+        let raw_child = trusted_follow_mdb_next(raw_slot);
+        assert(trusted_slot_ref_is_id(raw_child, state.slot_entry(slot).mdb_next.unwrap()));
+        let is_parent = is_mdb_parent_of_refined(
+            raw_slot,
+            raw_child,
+            Ghost(heap),
+            Ghost(state),
+            Ghost(slot),
+            Ghost(state.slot_entry(slot).mdb_next.unwrap()),
+        );
+        assert(is_parent == state.mdb_parent_of(slot, state.slot_entry(slot).mdb_next.unwrap()));
+        assert(
+            state.ensure_no_children_blocks(slot)
+                == (state.slot_entry(slot).mdb_next is Some
+                    && state.mdb_parent_of(slot, state.slot_entry(slot).mdb_next.unwrap()))
+        );
+        assert(state.ensure_no_children_blocks(slot) == state.mdb_parent_of(slot, state.slot_entry(slot).mdb_next.unwrap()));
+        if is_parent {
+            let ret = trusted_make_exception_syscall_error();
+            assert(state.ensure_no_children_blocks(slot));
+            assert(ensure_no_children_exec_contract(state, slot, ret));
+            assert(trusted_exception_is_none(ret) == !state.ensure_no_children_blocks(slot));
+            assert(trusted_exception_is_syscall_error(ret) == state.ensure_no_children_blocks(slot));
+            ret
+        } else {
+            let ret = trusted_make_exception_none();
+            assert(!state.ensure_no_children_blocks(slot));
+            assert(ensure_no_children_exec_contract(state, slot, ret));
+            assert(trusted_exception_is_none(ret) == !state.ensure_no_children_blocks(slot));
+            assert(trusted_exception_is_syscall_error(ret) == state.ensure_no_children_blocks(slot));
+            ret
+        }
+    } else {
+        proof {
+            assert(trusted_view_cte(raw_slot).mdb_next is None);
+            assert(state.slot_entry(slot).mdb_next is None);
+        }
+        let ret = trusted_make_exception_none();
+        assert(!state.ensure_no_children_blocks(slot));
+        assert(ensure_no_children_exec_contract(state, slot, ret));
+        assert(trusted_exception_is_none(ret) == !state.ensure_no_children_blocks(slot));
+        assert(trusted_exception_is_syscall_error(ret) == state.ensure_no_children_blocks(slot));
+        ret
+    }
+}
+
+pub fn derive_cap_refined(
+    raw_slot: &cte_t,
+    raw_capability: &cap,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: deriveCap_ret)
+    requires
+        derive_cap_call_pre_at(heap, state, slot, raw_slot, raw_capability),
+    ensures
+        derive_cap_exec_contract(state, slot, raw_capability, &ret),
+{
+    let ret = derive_cap_exec_step(
+        raw_slot,
+        raw_capability,
+        Ghost(heap),
+        Ghost(state),
+        Ghost(slot),
+    );
+    ret
+}
+
+pub fn derive_cap_via_ensure_no_children_refined(
+    raw_slot: &cte_t,
+    raw_capability: &cap,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: deriveCap_ret)
+    requires
+        derive_cap_call_pre_at(heap, state, slot, raw_slot, raw_capability),
+    ensures
+        derive_cap_exec_contract(state, slot, raw_capability, &ret),
+{
+    let is_zombie = trusted_cap_is_zombie(raw_capability);
+    let is_untyped = trusted_cap_is_untyped(raw_capability);
+    let is_irq_control = trusted_cap_is_irq_control(raw_capability);
+    if is_zombie {
+        let null_cap = trusted_make_null_cap();
+        let status = trusted_make_exception_none();
+        let ret = trusted_make_derive_cap_ret(status, &null_cap);
+        proof {
+            assert(trusted_view_cap(raw_capability).kind == CapKind::ZombieCap);
+        }
+        assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+        ret
+    } else if is_untyped {
+        let status = ensure_no_children_via_is_mdb_parent_of_refined(
+            raw_slot,
+            Ghost(heap),
+            Ghost(state),
+            Ghost(slot),
+        );
+        let ok = trusted_check_exception_is_none(status);
+        let out_cap = if ok {
+            trusted_clone_cap(raw_capability)
+        } else {
+            trusted_make_null_cap()
+        };
+        let ret = trusted_make_derive_cap_ret(status, &out_cap);
+        proof {
+            assert(trusted_view_cap(raw_capability).kind == CapKind::UntypedCap);
+            assert(
+                spec_derive_cap_returns_syscall_error(state, slot, trusted_view_cap(raw_capability))
+                    == state.ensure_no_children_blocks(slot)
+            );
+            assert(ok == !state.ensure_no_children_blocks(slot));
+        }
+        assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+        ret
+    } else {
+        #[cfg(not(feature = "kernel_mcs"))]
+        if trusted_cap_is_reply(raw_capability) {
+            let null_cap = trusted_make_null_cap();
+            let status = trusted_make_exception_none();
+            let ret = trusted_make_derive_cap_ret(status, &null_cap);
+            assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+            ret
+        } else if is_irq_control {
+            let null_cap = trusted_make_null_cap();
+            let status = trusted_make_exception_none();
+            let ret = trusted_make_derive_cap_ret(status, &null_cap);
+            assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+            ret
+        } else {
+            let out_cap = trusted_clone_cap(raw_capability);
+            let status = trusted_make_exception_none();
+            let ret = trusted_make_derive_cap_ret(status, &out_cap);
+            assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+            ret
+        }
+
+        #[cfg(feature = "kernel_mcs")]
+        if is_irq_control {
+            let null_cap = trusted_make_null_cap();
+            let status = trusted_make_exception_none();
+            let ret = trusted_make_derive_cap_ret(status, &null_cap);
+            assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+            ret
+        } else {
+            let out_cap = trusted_clone_cap(raw_capability);
+            let status = trusted_make_exception_none();
+            let ret = trusted_make_derive_cap_ret(status, &out_cap);
+            assert(derive_cap_exec_contract(state, slot, raw_capability, &ret));
+            ret
+        }
+    }
+}
+
+pub fn is_mdb_parent_of_refined(
+    raw_parent: &cte_t,
+    raw_child: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(parent): Ghost<SlotId>,
+    Ghost(child): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_mdb_parent_of_call_pre_at(heap, state, parent, child, raw_parent, raw_child),
+    ensures
+        is_mdb_parent_of_exec_contract(state, parent, child, ret),
+{
+    let ret = is_mdb_parent_of_exec_step(
+        raw_parent,
+        raw_child,
+        Ghost(heap),
+        Ghost(state),
+        Ghost(parent),
+        Ghost(child),
+    );
+    assert(is_mdb_parent_of_exec_contract(state, parent, child, ret));
+    ret
+}
+
+pub fn is_long_running_delete_via_is_final_cap_refined(
+    raw_slot: &cte_t,
+    Ghost(heap): Ghost<ConcreteHeapId>,
+    Ghost(state): Ghost<CSpaceState>,
+    Ghost(slot): Ghost<SlotId>,
+) -> (ret: bool)
+    requires
+        is_final_cap_call_pre_at(heap, state, slot, raw_slot),
+    ensures
+        is_long_running_delete_exec_contract(state, slot, ret),
+{
+    let is_final = is_final_cap_refined(raw_slot, Ghost(heap), Ghost(state), Ghost(slot));
+    let is_null = trusted_slot_cap_is_null(raw_slot);
+    let is_thread = trusted_slot_cap_is_thread(raw_slot);
+    let is_zombie = trusted_slot_cap_is_zombie(raw_slot);
+    let is_cnode = trusted_slot_cap_is_cnode(raw_slot);
+    let ret =
+        !is_null
+            && is_final
+            && (
+                is_thread
+                || is_zombie
+                || is_cnode
+            );
+    proof {
+        lemma_is_final_cap_call_pre_at_implies_raw_slot_view_matches_state(
+            heap,
+            state,
+            slot,
+            raw_slot,
+        );
+        assert(is_null == (trusted_view_cte(raw_slot).cap.kind == CapKind::NullCap));
+        assert(is_thread == (trusted_view_cte(raw_slot).cap.kind == CapKind::ThreadCap));
+        assert(is_zombie == (trusted_view_cte(raw_slot).cap.kind == CapKind::ZombieCap));
+        assert(is_cnode == (trusted_view_cte(raw_slot).cap.kind == CapKind::CNodeCap));
+        assert(trusted_view_cte(raw_slot).cap == state.slot_cap(slot));
+        assert(is_null == (state.slot_cap(slot).kind == CapKind::NullCap));
+        assert(is_thread == (state.slot_cap(slot).kind == CapKind::ThreadCap));
+        assert(is_zombie == (state.slot_cap(slot).kind == CapKind::ZombieCap));
+        assert(is_cnode == (state.slot_cap(slot).kind == CapKind::CNodeCap));
+        assert(is_final == state.is_final_cap(slot));
+    }
+    assert(is_long_running_delete_exec_contract(state, slot, ret));
+    ret
+}
+
+pub fn insert_new_cap_refined(
+    parent_slot: &mut cte_t,
+    slot_ref: &mut cte_t,
+    raw_new_cap: &cap,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(parent): Ghost<SlotId>,
+    Ghost(slot): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(parent),
+        old_state.has_slot(slot),
+        new_state.has_slot(parent),
+        new_state.has_slot(slot),
+        insert_new_cap_call_pre_at(
+            old_heap,
+            old_state,
+            parent,
+            slot,
+            raw_new_cap,
+            old(parent_slot),
+            old(slot_ref),
+        ),
+        spec_insert_new_cap_post(
+            old_state,
+            new_state,
+            parent,
+            slot,
+            trusted_view_cap(raw_new_cap),
+        ),
+    ensures
+        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        spec_insert_new_cap(
+            old_state,
+            new_state,
+            parent,
+            slot,
+            trusted_view_cap(raw_new_cap),
+        ),
+        new_state.slot_entry(parent)
+            == spec_insert_new_cap_expected_parent_entry(
+                old_state,
+                parent,
+                slot,
+            ),
+        new_state.slot_entry(slot)
+            == spec_insert_new_cap_expected_slot_entry(
+                old_state,
+                parent,
+                slot,
+                trusted_view_cap(raw_new_cap),
+            ),
+        trusted_concrete_slot_view_at(new_heap, parent)
+            == spec_insert_new_cap_expected_parent_entry(
+                old_state,
+                parent,
+                slot,
+            ),
+        trusted_concrete_slot_view_at(new_heap, slot)
+            == spec_insert_new_cap_expected_slot_entry(
+                old_state,
+                parent,
+                slot,
+                trusted_view_cap(raw_new_cap),
+            ),
+{
+    insert_new_cap_exec_step(
+        parent_slot,
+        slot_ref,
+        raw_new_cap,
+        Ghost(old_heap),
+        Ghost(old_state),
+        Ghost(new_heap),
+        Ghost(new_state),
+        Ghost(parent),
+        Ghost(slot),
+    );
+    assert(insert_new_cap_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        parent,
+        slot,
+        raw_new_cap,
+    ));
+    assert(trusted_cspace_heap_matches_state_at(new_heap, new_state));
+    assert(spec_insert_new_cap(
+        old_state,
+        new_state,
+        parent,
+        slot,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(new_state.slot_entry(parent) == spec_insert_new_cap_expected_parent_entry(
+        old_state,
+        parent,
+        slot,
+    ));
+    assert(new_state.slot_entry(slot) == spec_insert_new_cap_expected_slot_entry(
+        old_state,
+        parent,
+        slot,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, parent) == spec_insert_new_cap_expected_parent_entry(
+        old_state,
+        parent,
+        slot,
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, slot) == spec_insert_new_cap_expected_slot_entry(
+        old_state,
+        parent,
+        slot,
+        trusted_view_cap(raw_new_cap),
+    ));
+}
+
+pub fn cte_move_refined(
+    raw_new_cap: &cap,
+    src_slot: &mut cte_t,
+    dest_slot: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(src): Ghost<SlotId>,
+    Ghost(dest): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(src),
+        old_state.has_slot(dest),
+        new_state.has_slot(src),
+        new_state.has_slot(dest),
+        cte_move_call_pre_at(old_heap, old_state, src, dest, raw_new_cap, old(src_slot), old(dest_slot)),
+        spec_cte_move_post(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+        ),
+    ensures
+        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        spec_cte_move(
+            old_state,
+            new_state,
+            src,
+            dest,
+            trusted_view_cap(raw_new_cap),
+        ),
+        new_state.slot_entry(src) == spec_cte_move_expected_src_entry(),
+        new_state.slot_entry(dest)
+            == spec_cte_move_expected_dest_entry(
+                old_state,
+                src,
+                trusted_view_cap(raw_new_cap),
+            ),
+        trusted_concrete_slot_view_at(new_heap, src) == spec_cte_move_expected_src_entry(),
+        trusted_concrete_slot_view_at(new_heap, dest)
+            == spec_cte_move_expected_dest_entry(
+                old_state,
+                src,
+                trusted_view_cap(raw_new_cap),
+            ),
+{
+    cte_move_exec_step(
+        raw_new_cap,
+        src_slot,
+        dest_slot,
+        Ghost(old_heap),
+        Ghost(old_state),
+        Ghost(new_heap),
+        Ghost(new_state),
+        Ghost(src),
+        Ghost(dest),
+    );
+    assert(cte_move_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        src,
+        dest,
+        raw_new_cap,
+    ));
+    assert(trusted_cspace_heap_matches_state_at(new_heap, new_state));
+    assert(spec_cte_move(
+        old_state,
+        new_state,
+        src,
+        dest,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(new_state.slot_entry(src) == spec_cte_move_expected_src_entry());
+    assert(new_state.slot_entry(dest) == spec_cte_move_expected_dest_entry(
+        old_state,
+        src,
+        trusted_view_cap(raw_new_cap),
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, src) == spec_cte_move_expected_src_entry());
+    assert(trusted_concrete_slot_view_at(new_heap, dest) == spec_cte_move_expected_dest_entry(
+        old_state,
+        src,
+        trusted_view_cap(raw_new_cap),
+    ));
+}
+
+pub fn cte_swap_refined(
+    raw_cap1: &cap,
+    slot1: &mut cte_t,
+    raw_cap2: &cap,
+    slot2: &mut cte_t,
+    Ghost(old_heap): Ghost<ConcreteHeapId>,
+    Ghost(old_state): Ghost<CSpaceState>,
+    Ghost(new_heap): Ghost<ConcreteHeapId>,
+    Ghost(new_state): Ghost<CSpaceState>,
+    Ghost(slot1_id): Ghost<SlotId>,
+    Ghost(slot2_id): Ghost<SlotId>,
+)
+    requires
+        old_state.has_slot(slot1_id),
+        old_state.has_slot(slot2_id),
+        new_state.has_slot(slot1_id),
+        new_state.has_slot(slot2_id),
+        cte_swap_call_pre_at(
+            old_heap,
+            old_state,
+            slot1_id,
+            slot2_id,
+            raw_cap1,
+            raw_cap2,
+            old(slot1),
+            old(slot2),
+        ),
+        spec_cte_swap_post(
+            old_state,
+            new_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap1),
+            trusted_view_cap(raw_cap2),
+        ),
+    ensures
+        trusted_cspace_heap_matches_state_at(new_heap, new_state),
+        spec_cte_swap(
+            old_state,
+            new_state,
+            slot1_id,
+            slot2_id,
+            trusted_view_cap(raw_cap1),
+            trusted_view_cap(raw_cap2),
+        ),
+        new_state.slot_entry(slot1_id)
+            == spec_cte_swap_expected_slot1_entry(
+                old_state,
+                slot1_id,
+                slot2_id,
+                trusted_view_cap(raw_cap2),
+            ),
+        new_state.slot_entry(slot2_id)
+            == spec_cte_swap_expected_slot2_entry(
+                old_state,
+                slot1_id,
+                slot2_id,
+                trusted_view_cap(raw_cap1),
+            ),
+        trusted_concrete_slot_view_at(new_heap, slot1_id)
+            == spec_cte_swap_expected_slot1_entry(
+                old_state,
+                slot1_id,
+                slot2_id,
+                trusted_view_cap(raw_cap2),
+            ),
+        trusted_concrete_slot_view_at(new_heap, slot2_id)
+            == spec_cte_swap_expected_slot2_entry(
+                old_state,
+                slot1_id,
+                slot2_id,
+                trusted_view_cap(raw_cap1),
+            ),
+{
+    cte_swap_exec_step(
+        raw_cap1,
+        slot1,
+        raw_cap2,
+        slot2,
+        Ghost(old_heap),
+        Ghost(old_state),
+        Ghost(new_heap),
+        Ghost(new_state),
+        Ghost(slot1_id),
+        Ghost(slot2_id),
+    );
+    assert(cte_swap_exec_contract(
+        old_state,
+        new_heap,
+        new_state,
+        slot1_id,
+        slot2_id,
+        raw_cap1,
+        raw_cap2,
+    ));
+    assert(trusted_cspace_heap_matches_state_at(new_heap, new_state));
+    assert(spec_cte_swap(
+        old_state,
+        new_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap1),
+        trusted_view_cap(raw_cap2),
+    ));
+    assert(new_state.slot_entry(slot1_id) == spec_cte_swap_expected_slot1_entry(
+        old_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap2),
+    ));
+    assert(new_state.slot_entry(slot2_id) == spec_cte_swap_expected_slot2_entry(
+        old_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap1),
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, slot1_id) == spec_cte_swap_expected_slot1_entry(
+        old_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap2),
+    ));
+    assert(trusted_concrete_slot_view_at(new_heap, slot2_id) == spec_cte_swap_expected_slot2_entry(
+        old_state,
+        slot1_id,
+        slot2_id,
+        trusted_view_cap(raw_cap1),
+    ));
+}
+
+pub fn resolve_address_bits_refined(
+    raw_root: &cap,
+    cap_ptr: usize,
+    bits: usize,
+    Ghost(state): Ghost<CSpaceState>,
+) -> (ret: ResolveAddressBitsRetBridge)
+    requires
+        resolve_address_bits_bridge_pre(state, raw_root, cap_ptr, bits),
+    ensures
+        resolve_address_bits_exec_contract(state, raw_root, cap_ptr, bits, ret),
+{
+    let ret = resolve_address_bits_exec_step(raw_root, cap_ptr, bits, Ghost(state));
+    assert(resolve_address_bits_exec_contract(state, raw_root, cap_ptr, bits, ret));
+    ret
+}
+
+} // verus!

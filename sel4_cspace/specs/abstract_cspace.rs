@@ -91,6 +91,16 @@ pub ghost struct CSpaceState {
 	pub roots: Set<SlotId>,
 }
 
+pub open spec fn spec_same_object_as_caps(lhs: CapSpec, rhs: CapSpec) -> bool {
+	if lhs.kind == CapKind::UntypedCap || lhs.kind == CapKind::IRQControlCap {
+		false
+	} else {
+		lhs.region_id is Some
+		&& rhs.region_id is Some
+		&& lhs.region_id == rhs.region_id
+	}
+}
+
 pub open spec fn rights_subseteq(lhs: Rights, rhs: Rights) -> bool {
 	&&& lhs.can_read ==> rhs.can_read
 	&&& lhs.can_write ==> rhs.can_write
@@ -165,6 +175,7 @@ pub open spec fn valid_cap(cap: CapSpec) -> bool {
 			&&& object_kind_matches_cap_kind(cap.kind, cap.object.unwrap().kind)
 			&&& cap.untyped is Some
 			&&& cap.cnode is None
+			&&& 4 <= cap.untyped.unwrap().block_size_bits
 			&&& 0 <= cap.untyped.unwrap().block_size_bits
 			&&& 0 <= cap.untyped.unwrap().free_index <= cap.untyped.unwrap().block_size_bits
 		}
@@ -247,24 +258,88 @@ impl CSpaceState {
 		&&& rights_subseteq(self.slot_cap(child).rights, self.slot_cap(parent).rights)
 	}
 
+	pub open spec fn mdb_parent_badge_compatible(self, parent: SlotId, child: SlotId) -> bool
+		recommends
+			self.has_slot(parent),
+			self.has_slot(child),
+	{
+		if self.slot_cap(parent).kind == CapKind::EndpointCap
+			&& self.slot_cap(parent).badge is Some
+			&& self.slot_cap(parent).badge.unwrap() != 0
+		{
+			&&& self.slot_cap(child).kind == CapKind::EndpointCap
+			&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
+			&&& !self.slot_entry(child).mdb_first_badged
+		} else if self.slot_cap(parent).kind == CapKind::NotificationCap
+			&& self.slot_cap(parent).badge is Some
+			&& self.slot_cap(parent).badge.unwrap() != 0
+		{
+			&&& self.slot_cap(child).kind == CapKind::NotificationCap
+			&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
+			&&& !self.slot_entry(child).mdb_first_badged
+		} else {
+			true
+		}
+	}
+
+	pub open spec fn mdb_parent_of(self, parent: SlotId, child: SlotId) -> bool
+		recommends
+			self.has_slot(parent),
+			self.has_slot(child),
+	{
+		&&& self.mdb_links(parent, child)
+		&&& self.slot_entry(parent).mdb_revocable
+		&&& self.same_region(parent, child)
+		&&& self.mdb_parent_badge_compatible(parent, child)
+	}
+
+	pub open spec fn same_object_as(self, left: SlotId, right: SlotId) -> bool
+		recommends
+			self.has_slot(left),
+			self.has_slot(right),
+	{
+		spec_same_object_as_caps(self.slot_cap(left), self.slot_cap(right))
+	}
+
 	pub open spec fn is_final_cap(self, slot: SlotId) -> bool
 		recommends
 			self.has_slot(slot),
 	{
 		let prev_same_obj = if self.slot_entry(slot).mdb_prev is Some {
-			self.same_object(self.slot_entry(slot).mdb_prev.unwrap(), slot)
+			self.same_object_as(self.slot_entry(slot).mdb_prev.unwrap(), slot)
 		} else {
 			false
 		};
 
 		let next_same_obj = if self.slot_entry(slot).mdb_next is Some {
-			self.same_object(slot, self.slot_entry(slot).mdb_next.unwrap())
+			self.same_object_as(slot, self.slot_entry(slot).mdb_next.unwrap())
 		} else {
 			false
 		};
 
 		&&& !prev_same_obj
 		&&& !next_same_obj
+	}
+
+	pub open spec fn slot_cap_long_running_delete(self, slot: SlotId) -> bool
+		recommends
+			self.has_slot(slot),
+	{
+		&&& self.slot_cap(slot).kind != CapKind::NullCap
+		&&& self.is_final_cap(slot)
+		&&& (
+			self.slot_cap(slot).kind == CapKind::ThreadCap
+			|| self.slot_cap(slot).kind == CapKind::ZombieCap
+			|| self.slot_cap(slot).kind == CapKind::CNodeCap
+		)
+	}
+
+	pub open spec fn ensure_no_children_blocks(self, slot: SlotId) -> bool
+		recommends
+			self.has_slot(slot),
+	{
+		self.slot_entry(slot).mdb_next is Some
+		&& self.mdb_parent_of(slot, self.slot_entry(slot).mdb_next.unwrap())
 	}
 
 	pub open spec fn cnode_targets(self, slot: SlotId) -> Set<SlotId>
@@ -562,7 +637,7 @@ pub proof fn abstract_cspace_smoke_check() {
 				cap: ep_parent_cap,
 				mdb_prev: None,
 				mdb_next: Some(3int),
-				mdb_revocable: false,
+				mdb_revocable: true,
 				mdb_first_badged: false,
 			},
 			3int => SlotEntrySpec {
@@ -601,9 +676,77 @@ pub proof fn abstract_cspace_smoke_check() {
 	}
 	assert(state.reachable_slot_from(1int, 3int, 1));
 	assert(state.immediate_derived(2int, 3int));
+	assert(state.ensure_no_children_blocks(2int));
 	assert(!state.is_final_cap(2int));
 	assert(!state.is_final_cap(3int));
 	assert(slots_unchanged_except(state, state, set![]));
+
+	let untyped_object = ObjectRef {
+		id: 10,
+		kind: ObjectKind::Untyped,
+	};
+
+	let untyped_cap = CapSpec {
+		kind: CapKind::UntypedCap,
+		object: Some(untyped_object),
+		region_id: Some(10),
+		rights: Rights {
+			can_read: false,
+			can_write: false,
+			can_grant: false,
+			can_grant_reply: false,
+		},
+		badge: None,
+		cnode: None,
+		untyped: Some(UntypedCapDataSpec {
+			block_size_bits: 6,
+			free_index: 0,
+			is_device: false,
+		}),
+	};
+
+	let untyped_child_state = CSpaceState {
+		slots: map![
+			1int => SlotEntrySpec {
+				cap: root_cap,
+				mdb_prev: None,
+				mdb_next: None,
+				mdb_revocable: false,
+				mdb_first_badged: false,
+			},
+			4int => SlotEntrySpec {
+				cap: untyped_cap,
+				mdb_prev: None,
+				mdb_next: Some(5int),
+				mdb_revocable: true,
+				mdb_first_badged: false,
+			},
+			5int => SlotEntrySpec {
+				cap: untyped_cap,
+				mdb_prev: Some(4int),
+				mdb_next: None,
+				mdb_revocable: true,
+				mdb_first_badged: false,
+			}
+		],
+		cnode_slots: map![
+			root_cnode => set![4int, 5int]
+		],
+		cnode_lookup: map![
+			root_cnode => map![
+				0int => 4int,
+				1int => 5int
+			]
+		],
+		roots: set![1int],
+	};
+
+	assert(valid_cap(untyped_cap));
+	assert(untyped_child_state.wf());
+	assert(untyped_child_state.same_object(4int, 5int));
+	assert(!untyped_child_state.same_object_as(4int, 5int));
+	assert(untyped_child_state.is_final_cap(4int));
+	assert(!untyped_child_state.slot_cap_long_running_delete(4int));
 }
 
 }

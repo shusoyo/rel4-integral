@@ -4,6 +4,8 @@ verus! {
 
 #[allow(unused_imports)]
 use super::super::abstract_cspace::*;
+#[allow(unused_imports)]
+use super::resolve::*;
 
 pub open spec fn spec_same_object_if_present(lhs: CapSpec, rhs: CapSpec) -> bool {
 	(lhs.object is Some && rhs.object is Some) ==> lhs.object == rhs.object
@@ -11,6 +13,33 @@ pub open spec fn spec_same_object_if_present(lhs: CapSpec, rhs: CapSpec) -> bool
 
 pub open spec fn spec_same_region_if_present(lhs: CapSpec, rhs: CapSpec) -> bool {
 	(lhs.region_id is Some && rhs.region_id is Some) ==> lhs.region_id == rhs.region_id
+}
+
+pub open spec fn spec_null_cap() -> CapSpec {
+	CapSpec {
+		kind: CapKind::NullCap,
+		object: None,
+		region_id: None,
+		rights: Rights {
+			can_read: false,
+			can_write: false,
+			can_grant: false,
+			can_grant_reply: false,
+		},
+		badge: None,
+		cnode: None,
+		untyped: None,
+	}
+}
+
+pub open spec fn spec_empty_slot_entry() -> SlotEntrySpec {
+	SlotEntrySpec {
+		cap: spec_null_cap(),
+		mdb_prev: None,
+		mdb_next: None,
+		mdb_revocable: false,
+		mdb_first_badged: false,
+	}
 }
 
 /// A minimal Stage C notion of "the inserted cap is derivable from the source cap".
@@ -35,6 +64,41 @@ pub open spec fn spec_set_untyped_cap_as_full_applies(src_cap: CapSpec, new_cap:
 	&&& src_cap.untyped is Some
 	&&& new_cap.untyped is Some
 	&&& src_cap.untyped->Some_0.block_size_bits == new_cap.untyped->Some_0.block_size_bits
+	&&& 4 <= src_cap.untyped->Some_0.block_size_bits
+}
+
+pub closed spec fn spec_sel4_min_untyped_bits() -> int {
+	4
+}
+
+pub open spec fn spec_untyped_max_free_index(block_size_bits: int) -> int
+	recommends
+		spec_sel4_min_untyped_bits() <= block_size_bits,
+{
+	spec_pow2((block_size_bits - spec_sel4_min_untyped_bits()) as nat)
+}
+
+pub open spec fn spec_set_untyped_cap_as_full_result(
+	src_before: CapSpec,
+	new_cap: CapSpec,
+) -> CapSpec {
+	if spec_set_untyped_cap_as_full_applies(src_before, new_cap) {
+		CapSpec {
+			kind: src_before.kind,
+			object: src_before.object,
+			region_id: src_before.region_id,
+			rights: src_before.rights,
+			badge: src_before.badge,
+			cnode: src_before.cnode,
+			untyped: Some(UntypedCapDataSpec {
+				block_size_bits: src_before.untyped->Some_0.block_size_bits,
+				free_index: spec_untyped_max_free_index(src_before.untyped->Some_0.block_size_bits),
+				is_device: src_before.untyped->Some_0.is_device,
+			}),
+		}
+	} else {
+		src_before
+	}
 }
 
 /// Abstract contract for the l4v/Rust `maskedAsFull` / `setUntypedCapAsFull` effect.
@@ -46,21 +110,7 @@ pub open spec fn spec_set_untyped_cap_as_full_effect(
 	new_cap: CapSpec,
 	src_after: CapSpec,
 ) -> bool {
-	if spec_set_untyped_cap_as_full_applies(src_before, new_cap) {
-		&&& src_after.kind == src_before.kind
-		&&& src_after.object == src_before.object
-		&&& src_after.region_id == src_before.region_id
-		&&& src_after.rights == src_before.rights
-		&&& src_after.badge == src_before.badge
-		&&& src_after.cnode == src_before.cnode
-		&&& src_after.untyped is Some
-		&&& src_before.untyped is Some
-		&&& src_after.untyped->Some_0.block_size_bits == src_before.untyped->Some_0.block_size_bits
-		&&& src_after.untyped->Some_0.is_device == src_before.untyped->Some_0.is_device
-		&&& src_after.untyped->Some_0.free_index >= src_before.untyped->Some_0.free_index
-	} else {
-		src_after == src_before
-	}
+	src_after == spec_set_untyped_cap_as_full_result(src_before, new_cap)
 }
 
 }

@@ -1,6 +1,7 @@
 //! Primitive-operation specifications layered on top of the abstract CSpace model.
 
 pub mod common;
+pub mod derive;
 pub mod insert;
 pub mod r#move;
 pub mod resolve;
@@ -9,6 +10,8 @@ pub mod swap;
 
 #[allow(unused_imports)]
 pub use common::*;
+#[allow(unused_imports)]
+pub use derive::*;
 #[allow(unused_imports)]
 pub use insert::*;
 #[allow(unused_imports)]

@@ -74,6 +74,28 @@ pub open spec fn spec_cte_move_pre(
 	&&& spec_cte_move_cap_compatible(old_state, src, new_cap)
 }
 
+pub open spec fn spec_cte_move_expected_src_entry() -> SlotEntrySpec {
+	spec_empty_slot_entry()
+}
+
+pub open spec fn spec_cte_move_expected_dest_entry(
+	old_state: CSpaceState,
+	src: SlotId,
+	new_cap: CapSpec,
+) -> SlotEntrySpec
+	recommends
+		old_state.has_slot(src),
+{
+	let old_src = old_state.slot_entry(src);
+	SlotEntrySpec {
+		cap: new_cap,
+		mdb_prev: old_src.mdb_prev,
+		mdb_next: old_src.mdb_next,
+		mdb_revocable: old_src.mdb_revocable,
+		mdb_first_badged: old_src.mdb_first_badged,
+	}
+}
+
 pub open spec fn spec_cte_move_mdb_shape(
 	old_state: CSpaceState,
 	new_state: CSpaceState,
@@ -223,6 +245,33 @@ pub proof fn lemma_cte_move_post_preserves_untouched_slot(
 		spec_cte_move_changed_slots(old_state, src, dest),
 		slot,
 	);
+}
+
+pub proof fn lemma_cte_move_post_implies_expected_src_dest_entries(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+	new_cap: CapSpec,
+)
+	requires
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+		new_state.has_slot(src),
+		new_state.has_slot(dest),
+		spec_cte_move_post(old_state, new_state, src, dest, new_cap),
+	ensures
+		new_state.slot_entry(src) == spec_cte_move_expected_src_entry(),
+		new_state.slot_entry(dest) == spec_cte_move_expected_dest_entry(old_state, src, new_cap),
+{
+	assert(spec_cte_move_mdb_shape(old_state, new_state, src, dest));
+	assert(new_state.slot_cap(dest) == new_cap);
+	assert(new_state.slot_empty(src));
+	assert(new_state.slot_cap(src) == spec_null_cap());
+	assert(new_state.slot_entry(src).cap == new_state.slot_cap(src));
+	assert(new_state.slot_entry(dest).cap == new_state.slot_cap(dest));
+	assert(new_state.slot_entry(src) == spec_cte_move_expected_src_entry());
+	assert(new_state.slot_entry(dest) == spec_cte_move_expected_dest_entry(old_state, src, new_cap));
 }
 
 pub proof fn lemma_cte_move_pre_post_implies_contract(
