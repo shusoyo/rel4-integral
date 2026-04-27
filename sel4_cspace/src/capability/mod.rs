@@ -17,6 +17,8 @@ use sel4_common::sel4_config::*;
 use sel4_common::structures_gen::{cap, cap_null_cap, cap_tag};
 
 use crate::arch::{arch_same_object_as, arch_same_region_as};
+#[cfg(feature = "verify")]
+use vstd::prelude::*;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -164,6 +166,7 @@ impl cap_func for cap {
 }
 
 /// 判断两个cap指向的内核对象是否是同一个内存区域
+#[cfg(not(feature = "verify"))]
 pub fn same_region_as(cap1: &cap, cap2: &cap) -> bool {
     match cap1.get_tag() {
         cap_tag::cap_untyped_cap => {
@@ -256,13 +259,12 @@ pub fn same_region_as(cap1: &cap, cap2: &cap) -> bool {
 ///
 /// A special case is that cap2 is a untyped_cap derived from cap1, in this case, cap1 will excute
 /// set_untyped_cap_as_full, so you can assume cap1 and cap2 are different.
+#[cfg(not(feature = "verify"))]
 pub fn same_object_as(cap1: &cap, cap2: &cap) -> bool {
     if cap1.get_tag() == cap_tag::cap_untyped_cap {
         return false;
     }
-    if cap1.get_tag() == cap_tag::cap_irq_control_cap
-        && cap2.get_tag() == cap_tag::cap_irq_handler_cap
-    {
+    if cap1.get_tag() == cap_tag::cap_irq_control_cap {
         return false;
     }
     if cap1.is_arch_cap() && cap2.is_arch_cap() {
@@ -271,7 +273,27 @@ pub fn same_object_as(cap1: &cap, cap2: &cap) -> bool {
     same_region_as(cap1, cap2)
 }
 
+#[cfg(feature = "verify")]
+verus! {
+
+pub fn same_region_as(cap1: &cap, cap2: &cap) -> (ret: bool)
+    ensures
+        crate::cte::same_region_as_exec_contract(cap1, cap2, ret),
+{
+    crate::cte::same_region_as_refined(cap1, cap2)
+}
+
+pub fn same_object_as(cap1: &cap, cap2: &cap) -> (ret: bool)
+    ensures
+        crate::cte::same_object_as_exec_contract(cap1, cap2, ret),
+{
+    crate::cte::same_object_as_refined(cap1, cap2)
+}
+
+} // verus!
+
 /// 判断一个`capability`是否是可撤销的
+#[cfg(not(feature = "verify"))]
 pub fn is_cap_revocable(derived_cap: &cap, src_cap: &cap) -> bool {
     if derived_cap.is_arch_cap() {
         return derived_cap.arch_is_cap_revocable(src_cap);
@@ -297,3 +319,15 @@ pub fn is_cap_revocable(derived_cap: &cap, src_cap: &cap) -> bool {
         _ => false,
     }
 }
+
+#[cfg(feature = "verify")]
+verus! {
+
+pub fn is_cap_revocable(derived_cap: &cap, src_cap: &cap) -> (ret: bool)
+    ensures
+        crate::cte::is_cap_revocable_exec_contract(derived_cap, src_cap, ret),
+{
+    crate::cte::is_cap_revocable_refined(derived_cap, src_cap)
+}
+
+} // verus!

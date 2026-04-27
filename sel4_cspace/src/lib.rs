@@ -44,6 +44,7 @@ mod tests {
     use sel4_common::structures_gen::mdb_node;
     use sel4_common::structures_gen::{
         cap, cap_asid_control_cap, cap_asid_pool_cap, cap_cnode_cap, cap_frame_cap,
+        cap_irq_control_cap,
         cap_page_table_cap,
     };
     use sel4_common::{arch::shutdown, println, utils::convert_to_mut_type_ref};
@@ -53,12 +54,13 @@ mod tests {
 
     #[test_case]
     pub fn same_object_as_test() {
-        use sel4_common::structures_gen::cap_cnode_cap;
+        use sel4_common::structures_gen::{cap_cnode_cap, cap_irq_control_cap};
 
         println!("-----------------------------------");
         println!("Entering same_object_as_test case");
         let cap1 = cap_cnode_cap::new(1, 1, 1, 1).unsplay();
         let cap3 = cap_cnode_cap::new(1, 1, 2, 1).unsplay();
+        let irq_control = cap_irq_control_cap::new().unsplay();
         let mdb = mdb_node::new(0, 0, 0, 0);
         let mut cte1 = cte_t {
             capability: cap1,
@@ -67,6 +69,7 @@ mod tests {
         let cap2 = cte1.derive_cap(&cap3).capability;
         assert_eq!(same_object_as(&cte1.capability, &cap2), false);
         assert_eq!(same_object_as(&cap2, &cap3), true);
+        assert_eq!(same_object_as(&irq_control, &irq_control), false);
         println!("Test same_object_as_test passed");
         println!("-----------------------------------");
     }
