@@ -21,8 +21,9 @@ pub open spec fn spec_derive_cap_pre(
 	recommends
 		state.has_slot(slot),
 {
-	&&& state.wf()
+	&&& state.derive_cap_wf_at(slot)
 	&&& state.has_slot(slot)
+	&&& state.slot_cap(slot) == capability
 	&&& valid_cap(capability)
 	&&& capability.kind != CapKind::ArchCap
 }

@@ -5,6 +5,8 @@ verus! {
 #[allow(unused_imports)]
 use super::super::abstract_cspace::*;
 #[allow(unused_imports)]
+use super::common::*;
+#[allow(unused_imports)]
 use super::r#move::*;
 
 pub open spec fn spec_swap_slot_ref(ptr: Option<SlotId>, slot1: SlotId, slot2: SlotId) -> Option<SlotId> {
@@ -192,6 +194,46 @@ pub open spec fn spec_cte_swap_mdb_shape(
 	}
 }
 
+pub open spec fn spec_cte_swap_frame(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	slot1: SlotId,
+	slot2: SlotId,
+) -> bool
+	recommends
+		old_state.has_slot(slot1),
+		old_state.has_slot(slot2),
+{
+	spec_cspace_primitive_frame(
+		old_state,
+		new_state,
+		spec_cte_swap_changed_slots(old_state, slot1, slot2),
+	)
+}
+
+pub open spec fn spec_cte_swap_invariant_preservation(new_state: CSpaceState) -> bool {
+	spec_cspace_invariant_preservation(new_state)
+}
+
+pub open spec fn spec_cte_swap_functional(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	slot1: SlotId,
+	slot2: SlotId,
+	cap1: CapSpec,
+	cap2: CapSpec,
+) -> bool
+	recommends
+		old_state.has_slot(slot1),
+		old_state.has_slot(slot2),
+		new_state.has_slot(slot1),
+		new_state.has_slot(slot2),
+{
+	&&& new_state.slot_cap(slot1) == cap2
+	&&& new_state.slot_cap(slot2) == cap1
+	&&& spec_cte_swap_mdb_shape(old_state, new_state, slot1, slot2)
+}
+
 pub open spec fn spec_cte_swap_post(
 	old_state: CSpaceState,
 	new_state: CSpaceState,
@@ -206,16 +248,9 @@ pub open spec fn spec_cte_swap_post(
 		new_state.has_slot(slot1),
 		new_state.has_slot(slot2),
 {
-	let changed = spec_cte_swap_changed_slots(old_state, slot1, slot2);
-
-	&&& new_state.wf()
-	&&& new_state.roots =~= old_state.roots
-	&&& new_state.cnode_slots =~= old_state.cnode_slots
-	&&& new_state.cnode_lookup =~= old_state.cnode_lookup
-	&&& slots_unchanged_except(old_state, new_state, changed)
-	&&& new_state.slot_cap(slot1) == cap2
-	&&& new_state.slot_cap(slot2) == cap1
-	&&& spec_cte_swap_mdb_shape(old_state, new_state, slot1, slot2)
+	&&& spec_cte_swap_frame(old_state, new_state, slot1, slot2)
+	&&& spec_cte_swap_invariant_preservation(new_state)
+	&&& spec_cte_swap_functional(old_state, new_state, slot1, slot2, cap1, cap2)
 }
 
 pub open spec fn spec_cte_swap(

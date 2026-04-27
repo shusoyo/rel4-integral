@@ -140,6 +140,45 @@ pub open spec fn spec_cte_move_mdb_shape(
 	}
 }
 
+pub open spec fn spec_cte_move_frame(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+) -> bool
+	recommends
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+{
+	spec_cspace_primitive_frame(
+		old_state,
+		new_state,
+		spec_cte_move_changed_slots(old_state, src, dest),
+	)
+}
+
+pub open spec fn spec_cte_move_invariant_preservation(new_state: CSpaceState) -> bool {
+	spec_cspace_invariant_preservation(new_state)
+}
+
+pub open spec fn spec_cte_move_functional(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	src: SlotId,
+	dest: SlotId,
+	new_cap: CapSpec,
+) -> bool
+	recommends
+		old_state.has_slot(src),
+		old_state.has_slot(dest),
+		new_state.has_slot(src),
+		new_state.has_slot(dest),
+{
+	&&& new_state.slot_cap(dest) == new_cap
+	&&& new_state.slot_empty(src)
+	&&& spec_cte_move_mdb_shape(old_state, new_state, src, dest)
+}
+
 pub open spec fn spec_cte_move_post(
 	old_state: CSpaceState,
 	new_state: CSpaceState,
@@ -153,16 +192,9 @@ pub open spec fn spec_cte_move_post(
 		new_state.has_slot(src),
 		new_state.has_slot(dest),
 {
-	let changed = spec_cte_move_changed_slots(old_state, src, dest);
-
-	&&& new_state.wf()
-	&&& new_state.roots =~= old_state.roots
-	&&& new_state.cnode_slots =~= old_state.cnode_slots
-	&&& new_state.cnode_lookup =~= old_state.cnode_lookup
-	&&& slots_unchanged_except(old_state, new_state, changed)
-	&&& new_state.slot_cap(dest) == new_cap
-	&&& new_state.slot_empty(src)
-	&&& spec_cte_move_mdb_shape(old_state, new_state, src, dest)
+	&&& spec_cte_move_frame(old_state, new_state, src, dest)
+	&&& spec_cte_move_invariant_preservation(new_state)
+	&&& spec_cte_move_functional(old_state, new_state, src, dest, new_cap)
 }
 
 pub open spec fn spec_cte_move(

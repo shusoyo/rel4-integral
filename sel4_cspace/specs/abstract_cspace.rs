@@ -4,8 +4,28 @@ verus! {
 
 pub type SlotId = int;
 
-pub closed spec fn cspace_word_bits() -> int {
+pub open spec fn cspace_word_bits() -> int {
 	64
+}
+
+pub open spec fn cspace_endpoint_bits() -> int {
+	4
+}
+
+pub open spec fn cspace_notification_bits() -> int {
+	5
+}
+
+pub open spec fn cspace_slot_bits() -> int {
+	5
+}
+
+pub open spec fn cspace_tcb_bits() -> int {
+	10
+}
+
+pub open spec fn cspace_min_untyped_bits() -> int {
+	4
 }
 
 pub ghost enum ObjectKind {
@@ -91,14 +111,220 @@ pub ghost struct CSpaceState {
 	pub roots: Set<SlotId>,
 }
 
+pub open spec fn cspace_spec_pow2(bits: nat) -> int
+	decreases bits,
+{
+	if bits == 0 {
+		1
+	} else {
+		2 * cspace_spec_pow2((bits - 1) as nat)
+	}
+}
+
+pub open spec fn spec_is_physical_cap(cap: CapSpec) -> bool {
+	match cap.kind {
+		CapKind::NullCap
+		| CapKind::IRQControlCap
+		| CapKind::IRQHandlerCap
+		| CapKind::ReplyCap => false,
+		CapKind::ArchCap => spec_arch_is_physical_cap(cap),
+		_ => true,
+	}
+}
+
+pub open spec fn spec_arch_is_physical_cap(cap: CapSpec) -> bool {
+	let _ = cap;
+	false
+}
+
+pub open spec fn spec_same_object_ref(lhs: CapSpec, rhs: CapSpec) -> bool {
+	lhs.object is Some
+	&& rhs.object is Some
+	&& lhs.object == rhs.object
+}
+
+pub open spec fn spec_cap_size_bits(cap: CapSpec) -> int {
+	match cap.kind {
+		CapKind::UntypedCap =>
+			if cap.untyped is Some {
+				cap.untyped.unwrap().block_size_bits
+			} else {
+				0
+			},
+		CapKind::EndpointCap => cspace_endpoint_bits(),
+		CapKind::NotificationCap => cspace_notification_bits(),
+		CapKind::CNodeCap =>
+			if cap.cnode is Some {
+				cap.cnode.unwrap().radix_bits + cspace_slot_bits()
+			} else {
+				0
+			},
+		CapKind::ThreadCap => cspace_tcb_bits(),
+		CapKind::ZombieCap => 0,
+		CapKind::ArchCap => 0,
+		_ => 0,
+	}
+}
+
+pub open spec fn spec_cap_range_top(cap: CapSpec) -> int {
+	if cap.object is Some {
+		let base = cap.object.unwrap().id;
+		let bits = spec_cap_size_bits(cap);
+		if 0 <= bits {
+			base + cspace_spec_pow2(bits as nat) - 1
+		} else {
+			base - 1
+		}
+	} else {
+		-1
+	}
+}
+
+pub open spec fn spec_arch_same_region_as_caps(lhs: CapSpec, rhs: CapSpec) -> bool {
+	let _ = lhs;
+	let _ = rhs;
+	false
+}
+
+pub open spec fn spec_arch_same_object_as_caps(lhs: CapSpec, rhs: CapSpec) -> bool {
+	let _ = lhs;
+	let _ = rhs;
+	false
+}
+
+pub open spec fn spec_untyped_cap_contains_cap(lhs: CapSpec, rhs: CapSpec) -> bool {
+	&&& lhs.kind == CapKind::UntypedCap
+	&&& lhs.object is Some
+	&&& lhs.untyped is Some
+	&&& cspace_min_untyped_bits() <= lhs.untyped.unwrap().block_size_bits
+	&&& spec_is_physical_cap(rhs)
+	&&& rhs.object is Some
+	&&& {
+		let base = lhs.object.unwrap().id;
+		let top = base + cspace_spec_pow2(lhs.untyped.unwrap().block_size_bits as nat) - 1;
+		let rhs_base = rhs.object.unwrap().id;
+		let rhs_top = spec_cap_range_top(rhs);
+		&&& base <= rhs_base
+		&&& rhs_base <= rhs_top
+		&&& rhs_top <= top
+	}
+}
+
+pub open spec fn spec_same_region_as_caps(lhs: CapSpec, rhs: CapSpec) -> bool {
+	match lhs.kind {
+		CapKind::UntypedCap => spec_untyped_cap_contains_cap(lhs, rhs),
+		CapKind::EndpointCap => {
+			lhs.kind == rhs.kind
+			&& spec_same_object_ref(lhs, rhs)
+		}
+		CapKind::NotificationCap => {
+			lhs.kind == rhs.kind
+			&& spec_same_object_ref(lhs, rhs)
+		}
+		CapKind::CNodeCap => {
+			&&& rhs.kind == CapKind::CNodeCap
+			&&& spec_same_object_ref(lhs, rhs)
+			&&& lhs.cnode is Some
+			&&& rhs.cnode is Some
+			&&& lhs.cnode.unwrap().radix_bits == rhs.cnode.unwrap().radix_bits
+		}
+		CapKind::ThreadCap => {
+			lhs.kind == rhs.kind
+			&& spec_same_object_ref(lhs, rhs)
+		}
+		CapKind::ReplyCap => {
+			lhs.kind == rhs.kind
+			&& spec_same_object_ref(lhs, rhs)
+		}
+		CapKind::IRQControlCap => {
+			rhs.kind == CapKind::IRQControlCap
+			|| rhs.kind == CapKind::IRQHandlerCap
+		}
+		CapKind::IRQHandlerCap => {
+			rhs.kind == CapKind::IRQHandlerCap
+			&& spec_same_object_ref(lhs, rhs)
+		}
+		CapKind::ArchCap => {
+			rhs.kind == CapKind::ArchCap
+			&& spec_arch_same_region_as_caps(lhs, rhs)
+		}
+		_ => false,
+	}
+}
+
 pub open spec fn spec_same_object_as_caps(lhs: CapSpec, rhs: CapSpec) -> bool {
 	if lhs.kind == CapKind::UntypedCap || lhs.kind == CapKind::IRQControlCap {
 		false
+	} else if lhs.kind == CapKind::ArchCap && rhs.kind == CapKind::ArchCap {
+		spec_arch_same_object_as_caps(lhs, rhs)
 	} else {
-		lhs.region_id is Some
-		&& rhs.region_id is Some
-		&& lhs.region_id == rhs.region_id
+		spec_same_region_as_caps(lhs, rhs)
 	}
+}
+
+pub open spec fn spec_is_cap_revocable(new_cap: CapSpec, src_cap: CapSpec) -> bool {
+	match new_cap.kind {
+		CapKind::EndpointCap => {
+			src_cap.kind == CapKind::EndpointCap
+			&& new_cap.badge != src_cap.badge
+		}
+		CapKind::NotificationCap => {
+			src_cap.kind == CapKind::NotificationCap
+			&& new_cap.badge != src_cap.badge
+		}
+		CapKind::IRQHandlerCap => src_cap.kind == CapKind::IRQControlCap,
+		CapKind::UntypedCap => true,
+		_ => false,
+	}
+}
+
+pub open spec fn spec_is_arch_mdb_parent_of(
+	parent_cap: CapSpec,
+	child_cap: CapSpec,
+	child_first_badged: bool,
+) -> bool {
+	let _ = child_first_badged;
+	if parent_cap.kind == CapKind::ArchCap || child_cap.kind == CapKind::ArchCap {
+		parent_cap.kind == CapKind::ArchCap && child_cap.kind == CapKind::ArchCap
+	} else {
+		true
+	}
+}
+
+pub open spec fn spec_mdb_parent_badge_compatible_caps(
+	parent_cap: CapSpec,
+	child_cap: CapSpec,
+	child_first_badged: bool,
+) -> bool {
+	if parent_cap.kind == CapKind::EndpointCap
+		&& parent_cap.badge is Some
+		&& parent_cap.badge.unwrap() != 0
+	{
+		&&& child_cap.kind == CapKind::EndpointCap
+		&&& child_cap.badge == parent_cap.badge
+		&&& !child_first_badged
+	} else if parent_cap.kind == CapKind::NotificationCap
+		&& parent_cap.badge is Some
+		&& parent_cap.badge.unwrap() != 0
+	{
+		&&& child_cap.kind == CapKind::NotificationCap
+		&&& child_cap.badge == parent_cap.badge
+		&&& !child_first_badged
+	} else {
+		true
+	}
+}
+
+pub open spec fn spec_mdb_parent_of_caps(
+	parent_cap: CapSpec,
+	parent_revocable: bool,
+	child_cap: CapSpec,
+	child_first_badged: bool,
+) -> bool {
+	&&& parent_revocable
+	&&& spec_same_region_as_caps(parent_cap, child_cap)
+	&&& spec_is_arch_mdb_parent_of(parent_cap, child_cap, child_first_badged)
+	&&& spec_mdb_parent_badge_compatible_caps(parent_cap, child_cap, child_first_badged)
 }
 
 pub open spec fn rights_subseteq(lhs: Rights, rhs: Rights) -> bool {
@@ -169,14 +395,16 @@ pub open spec fn valid_cap(cap: CapSpec) -> bool {
 			&&& 0 <= cap.cnode.unwrap().guard_size
 			&&& 0 < cap.cnode.unwrap().guard_size + cap.cnode.unwrap().radix_bits
 			&&& cap.cnode.unwrap().guard_size + cap.cnode.unwrap().radix_bits <= cspace_word_bits()
+			&&& cap.cnode.unwrap().radix_bits + cspace_slot_bits() < cspace_word_bits()
 		}
 		CapKind::UntypedCap => {
 			&&& cap.object is Some
 			&&& object_kind_matches_cap_kind(cap.kind, cap.object.unwrap().kind)
 			&&& cap.untyped is Some
 			&&& cap.cnode is None
-			&&& 4 <= cap.untyped.unwrap().block_size_bits
+			&&& cspace_min_untyped_bits() <= cap.untyped.unwrap().block_size_bits
 			&&& 0 <= cap.untyped.unwrap().block_size_bits
+			&&& cap.untyped.unwrap().block_size_bits < cspace_word_bits()
 			&&& 0 <= cap.untyped.unwrap().free_index <= cap.untyped.unwrap().block_size_bits
 		}
 		_ => {
@@ -233,9 +461,7 @@ impl CSpaceState {
 			self.has_slot(left),
 			self.has_slot(right),
 	{
-		self.slot_cap(left).region_id is Some
-		&& self.slot_cap(right).region_id is Some
-		&& self.slot_cap(left).region_id == self.slot_cap(right).region_id
+		spec_same_region_as_caps(self.slot_cap(left), self.slot_cap(right))
 	}
 
 	pub open spec fn mdb_links(self, parent: SlotId, child: SlotId) -> bool
@@ -263,23 +489,11 @@ impl CSpaceState {
 			self.has_slot(parent),
 			self.has_slot(child),
 	{
-		if self.slot_cap(parent).kind == CapKind::EndpointCap
-			&& self.slot_cap(parent).badge is Some
-			&& self.slot_cap(parent).badge.unwrap() != 0
-		{
-			&&& self.slot_cap(child).kind == CapKind::EndpointCap
-			&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
-			&&& !self.slot_entry(child).mdb_first_badged
-		} else if self.slot_cap(parent).kind == CapKind::NotificationCap
-			&& self.slot_cap(parent).badge is Some
-			&& self.slot_cap(parent).badge.unwrap() != 0
-		{
-			&&& self.slot_cap(child).kind == CapKind::NotificationCap
-			&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
-			&&& !self.slot_entry(child).mdb_first_badged
-		} else {
-			true
-		}
+		spec_mdb_parent_badge_compatible_caps(
+			self.slot_cap(parent),
+			self.slot_cap(child),
+			self.slot_entry(child).mdb_first_badged,
+		)
 	}
 
 	pub open spec fn mdb_parent_of(self, parent: SlotId, child: SlotId) -> bool
@@ -287,10 +501,12 @@ impl CSpaceState {
 			self.has_slot(parent),
 			self.has_slot(child),
 	{
-		&&& self.mdb_links(parent, child)
-		&&& self.slot_entry(parent).mdb_revocable
-		&&& self.same_region(parent, child)
-		&&& self.mdb_parent_badge_compatible(parent, child)
+		spec_mdb_parent_of_caps(
+			self.slot_cap(parent),
+			self.slot_entry(parent).mdb_revocable,
+			self.slot_cap(child),
+			self.slot_entry(child).mdb_first_badged,
+		)
 	}
 
 	pub open spec fn same_object_as(self, left: SlotId, right: SlotId) -> bool
@@ -416,6 +632,27 @@ impl CSpaceState {
 		forall|slot: SlotId| #![auto] self.has_slot(slot) ==> self.valid_slot_entry(slot)
 	}
 
+	pub open spec fn mdb_cte_wf_at(self, slot: SlotId) -> bool {
+		&&& self.has_slot(slot)
+		&&& if self.has_slot(slot) {
+			self.valid_slot_entry(slot)
+		} else {
+			false
+		}
+	}
+
+	pub open spec fn is_final_cap_wf_at(self, slot: SlotId) -> bool {
+		self.mdb_cte_wf_at(slot)
+	}
+
+	pub open spec fn ensure_no_children_wf_at(self, slot: SlotId) -> bool {
+		self.mdb_cte_wf_at(slot)
+	}
+
+	pub open spec fn derive_cap_wf_at(self, slot: SlotId) -> bool {
+		self.ensure_no_children_wf_at(slot)
+	}
+
 	pub open spec fn mdb_prev_next_consistent(self) -> bool {
 		forall|slot: SlotId| #![auto]
 			self.has_slot(slot) ==> {
@@ -428,19 +665,18 @@ impl CSpaceState {
 
 	pub open spec fn badge_derivation_wf(self) -> bool {
 		forall|parent: SlotId, child: SlotId| #![auto]
-			self.has_slot(parent) && self.has_slot(child) && self.immediate_derived(parent, child) ==> {
-				if self.slot_cap(parent).kind == CapKind::EndpointCap
-					|| self.slot_cap(parent).kind == CapKind::NotificationCap {
-					if self.slot_cap(parent).badge is Some && self.slot_cap(parent).badge.unwrap() != 0 {
-						&&& self.slot_cap(child).badge == self.slot_cap(parent).badge
-						&&& !self.slot_entry(child).mdb_first_badged
-					} else {
-						true
-					}
-				} else {
-					true
-				}
-			}
+			self.has_slot(parent) && self.has_slot(child) && self.immediate_derived(parent, child)
+				==> spec_mdb_parent_badge_compatible_caps(
+					self.slot_cap(parent),
+					self.slot_cap(child),
+					self.slot_entry(child).mdb_first_badged,
+				)
+	}
+
+	pub open spec fn mdb_state_wf(self) -> bool {
+		&&& self.valid_slots()
+		&&& self.mdb_prev_next_consistent()
+		&&& self.badge_derivation_wf()
 	}
 
 	pub open spec fn cnode_slots_wf(self) -> bool {
@@ -488,14 +724,17 @@ impl CSpaceState {
 			}
 	}
 
-	pub open spec fn wf(self) -> bool {
+	pub open spec fn cspace_lookup_wf(self) -> bool {
 		&&& self.valid_slots()
-		&&& self.mdb_prev_next_consistent()
-		&&& self.badge_derivation_wf()
 		&&& self.cnode_slots_wf()
 		&&& self.cnode_lookup_wf()
-		&&& self.cspace_roots_wf()
 		&&& self.cspace_graph_wf()
+	}
+
+	pub open spec fn wf(self) -> bool {
+		&&& self.mdb_state_wf()
+		&&& self.cspace_lookup_wf()
+		&&& self.cspace_roots_wf()
 	}
 }
 
@@ -504,6 +743,8 @@ pub proof fn lemma_wf_implies_core_invariants(state: CSpaceState)
 	requires
 		state.wf(),
 	ensures
+		state.mdb_state_wf(),
+		state.cspace_lookup_wf(),
 		state.valid_slots(),
 		state.mdb_prev_next_consistent(),
 		state.badge_derivation_wf(),
@@ -512,6 +753,48 @@ pub proof fn lemma_wf_implies_core_invariants(state: CSpaceState)
 		state.cspace_roots_wf(),
 		state.cspace_graph_wf(),
 {
+}
+
+pub proof fn lemma_mdb_cte_wf_at_implies_valid_slot_entry(
+	state: CSpaceState,
+	slot: SlotId,
+)
+	requires
+		state.mdb_cte_wf_at(slot),
+	ensures
+		state.has_slot(slot),
+		state.valid_slot_entry(slot),
+{
+}
+
+pub proof fn lemma_wf_implies_mdb_cte_wf_at(
+	state: CSpaceState,
+	slot: SlotId,
+)
+	requires
+		state.wf(),
+		state.has_slot(slot),
+	ensures
+		state.mdb_cte_wf_at(slot),
+		state.is_final_cap_wf_at(slot),
+		state.ensure_no_children_wf_at(slot),
+		state.derive_cap_wf_at(slot),
+{
+	lemma_wf_implies_core_invariants(state);
+	assert(state.valid_slots());
+}
+
+pub proof fn lemma_cspace_lookup_wf_implies_valid_slot_entry(
+	state: CSpaceState,
+	slot: SlotId,
+)
+	requires
+		state.cspace_lookup_wf(),
+		state.has_slot(slot),
+	ensures
+		state.valid_slot_entry(slot),
+{
+	assert(state.valid_slots());
 }
 
 /// Reusable Stage C helper for proving properties about a single slot under `wf`.
@@ -525,8 +808,8 @@ pub proof fn lemma_wf_implies_valid_slot_entry(
 	ensures
 		state.valid_slot_entry(slot),
 {
-	lemma_wf_implies_core_invariants(state);
-	assert(state.valid_slots());
+	lemma_wf_implies_mdb_cte_wf_at(state, slot);
+	lemma_mdb_cte_wf_at_implies_valid_slot_entry(state, slot);
 }
 
 pub open spec fn slots_unchanged_except(
@@ -624,6 +907,121 @@ pub proof fn abstract_cspace_smoke_check() {
 		untyped: None,
 	};
 
+	let cnode_same_region = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(root_cnode),
+		region_id: Some(0),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 4,
+			guard: 0,
+			guard_size: 0,
+		}),
+		untyped: None,
+	};
+
+	let cnode_different_region = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(root_cnode),
+		region_id: Some(0),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 5,
+			guard: 0,
+			guard_size: 0,
+		}),
+		untyped: None,
+	};
+
+	let irq_control_cap = CapSpec {
+		kind: CapKind::IRQControlCap,
+		object: None,
+		region_id: None,
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: None,
+	};
+
+	let irq_handler_cap = CapSpec {
+		kind: CapKind::IRQHandlerCap,
+		object: Some(ObjectRef {
+			id: 7,
+			kind: ObjectKind::IRQ,
+		}),
+		region_id: Some(7),
+		rights: no_rights,
+		badge: None,
+		cnode: None,
+		untyped: None,
+	};
+
+	let badged_endpoint_parent = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(1),
+		rights: endpoint_rights,
+		badge: Some(9),
+		cnode: None,
+		untyped: None,
+	};
+
+	let badged_endpoint_child = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(1),
+		rights: endpoint_rights,
+		badge: Some(9),
+		cnode: None,
+		untyped: None,
+	};
+
+	let rebadged_endpoint_child = CapSpec {
+		kind: CapKind::EndpointCap,
+		object: Some(endpoint_object),
+		region_id: Some(1),
+		rights: endpoint_rights,
+		badge: Some(10),
+		cnode: None,
+		untyped: None,
+	};
+
+	let contained_cnode_cap = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(ObjectRef {
+			id: 16,
+			kind: ObjectKind::CNode,
+		}),
+		region_id: Some(16),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 0,
+			guard: 0,
+			guard_size: 1,
+		}),
+		untyped: None,
+	};
+
+	let oversized_cnode_cap = CapSpec {
+		kind: CapKind::CNodeCap,
+		object: Some(ObjectRef {
+			id: 48,
+			kind: ObjectKind::CNode,
+		}),
+		region_id: Some(48),
+		rights: no_rights,
+		badge: None,
+		cnode: Some(CNodeCapDataSpec {
+			radix_bits: 5,
+			guard: 0,
+			guard_size: 0,
+		}),
+		untyped: None,
+	};
+
 	let state = CSpaceState {
 		slots: map![
 			1int => SlotEntrySpec {
@@ -663,7 +1061,40 @@ pub proof fn abstract_cspace_smoke_check() {
 	assert(valid_cap(root_cap));
 	assert(valid_cap(ep_parent_cap));
 	assert(valid_cap(ep_child_cap));
+	assert(valid_cap(cnode_same_region));
+	assert(valid_cap(cnode_different_region));
+	assert(valid_cap(irq_control_cap));
+	assert(valid_cap(irq_handler_cap));
+	assert(valid_cap(badged_endpoint_parent));
+	assert(valid_cap(badged_endpoint_child));
+	assert(valid_cap(rebadged_endpoint_child));
+	assert(valid_cap(contained_cnode_cap));
+	assert(valid_cap(oversized_cnode_cap));
+	assert(spec_same_region_as_caps(ep_parent_cap, ep_child_cap));
+	assert(spec_same_object_as_caps(ep_parent_cap, ep_child_cap));
+	assert(spec_same_region_as_caps(cnode_same_region, root_cap));
+	assert(!spec_same_region_as_caps(cnode_different_region, root_cap));
+	assert(!spec_is_physical_cap(irq_handler_cap));
+	assert(spec_same_region_as_caps(irq_control_cap, irq_handler_cap));
+	assert(!spec_same_object_as_caps(irq_control_cap, irq_control_cap));
+	assert(!spec_same_object_as_caps(irq_control_cap, irq_handler_cap));
+	assert(spec_is_cap_revocable(irq_handler_cap, irq_control_cap));
+	assert(!spec_mdb_parent_badge_compatible_caps(
+		badged_endpoint_parent,
+		badged_endpoint_child,
+		true,
+	));
+	assert(spec_mdb_parent_badge_compatible_caps(
+		badged_endpoint_parent,
+		badged_endpoint_child,
+		false,
+	));
+	assert(spec_is_cap_revocable(rebadged_endpoint_child, badged_endpoint_parent));
 	assert(state.wf());
+	assert(state.mdb_state_wf());
+	assert(state.cspace_lookup_wf());
+	assert(state.is_final_cap_wf_at(2int));
+	assert(state.ensure_no_children_wf_at(2int));
 	assert(state.cnode_cap_slot_at(root_cap, 0int) == Some(2int));
 	assert(state.cnode_cap_slot_at(root_cap, 1int) == Some(3int));
 	assert(state.cspace_edge(1int, 2int)) by {
@@ -742,7 +1173,23 @@ pub proof fn abstract_cspace_smoke_check() {
 	};
 
 	assert(valid_cap(untyped_cap));
+	assert(spec_cap_size_bits(contained_cnode_cap) == 5);
+	assert(cspace_spec_pow2(6nat) == 64) by (compute_only);
+	assert(cspace_spec_pow2(5nat) == 32) by (compute_only);
+	assert(spec_same_region_as_caps(untyped_cap, contained_cnode_cap)) by {
+		assert(10 <= 16);
+		assert(16 <= 16 + cspace_spec_pow2(5nat) - 1);
+		assert(16 + cspace_spec_pow2(5nat) - 1 <= 10 + cspace_spec_pow2(6nat) - 1);
+	};
+	assert(spec_cap_size_bits(oversized_cnode_cap) == 10);
+	assert(cspace_spec_pow2(10nat) == 1024) by (compute_only);
+	assert(!spec_same_region_as_caps(untyped_cap, oversized_cnode_cap)) by {
+		assert(48 <= 48 + cspace_spec_pow2(10nat) - 1);
+		assert(!(48 + cspace_spec_pow2(10nat) - 1 <= 10 + cspace_spec_pow2(6nat) - 1));
+	};
 	assert(untyped_child_state.wf());
+	assert(untyped_child_state.mdb_state_wf());
+	assert(untyped_child_state.derive_cap_wf_at(4int));
 	assert(untyped_child_state.same_object(4int, 5int));
 	assert(!untyped_child_state.same_object_as(4int, 5int));
 	assert(untyped_child_state.is_final_cap(4int));

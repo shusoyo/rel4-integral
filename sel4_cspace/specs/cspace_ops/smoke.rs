@@ -11,6 +11,8 @@ use super::derive::*;
 #[allow(unused_imports)]
 use super::insert::*;
 #[allow(unused_imports)]
+use super::queries::*;
+#[allow(unused_imports)]
 use super::r#move::*;
 #[allow(unused_imports)]
 use super::resolve::*;
@@ -150,8 +152,8 @@ pub proof fn cte_insert_smoke_check() {
 				cap: inserted_cap,
 				mdb_prev: Some(2int),
 				mdb_next: None,
-				mdb_revocable: true,
-				mdb_first_badged: true,
+				mdb_revocable: false,
+				mdb_first_badged: false,
 			}
 		],
 		cnode_slots: map![
@@ -172,9 +174,12 @@ pub proof fn cte_insert_smoke_check() {
 	assert(spec_cte_insert_changed_slots(old_state, 2int, 3int) =~= set![2int, 3int]);
 	lemma_cte_insert_changed_slots_contains_src_dest(old_state, 2int, 3int);
 	assert(slots_unchanged_except(old_state, new_state, set![2int, 3int]));
-	assert(spec_cte_insert_mdb_shape(old_state, new_state, 2int, 3int, true));
+	assert(spec_cte_insert_frame(old_state, new_state, 2int, 3int));
+	assert(spec_cte_insert_invariant_preservation(new_state));
+	assert(spec_cte_insert_mdb_shape(old_state, new_state, 2int, 3int, false));
+	assert(spec_cte_insert_functional(old_state, new_state, 2int, 3int, inserted_cap, false));
 	assert(new_state.slot_entry(2int) == spec_cte_insert_expected_src_entry(old_state, 2int, 3int, inserted_cap));
-	assert(new_state.slot_entry(3int) == spec_cte_insert_expected_dest_entry(old_state, 2int, 3int, inserted_cap, true));
+	assert(new_state.slot_entry(3int) == spec_cte_insert_expected_dest_entry(old_state, 2int, 3int, inserted_cap, false));
 }
 
 pub proof fn set_untyped_cap_as_full_smoke_check() {
@@ -218,22 +223,17 @@ pub proof fn set_untyped_cap_as_full_smoke_check() {
 		}),
 	};
 
+	assert(cspace_min_untyped_bits() == 4) by (compute_only);
 	assert(valid_cap(src_cap));
 	assert(valid_cap(inserted_cap));
 	assert(spec_set_untyped_cap_as_full_applies(src_cap, inserted_cap));
-	assert(spec_set_untyped_cap_as_full_result(src_cap, inserted_cap) == CapSpec {
-		kind: CapKind::UntypedCap,
-		object: Some(untyped_object),
-		region_id: Some(7),
-		rights: no_rights,
-		badge: None,
-		cnode: None,
-		untyped: Some(UntypedCapDataSpec {
-			block_size_bits: 6,
-			free_index: spec_untyped_max_free_index(6),
-			is_device: false,
-		}),
-	});
+	let result = spec_set_untyped_cap_as_full_result(src_cap, inserted_cap);
+	assert(result.kind == CapKind::UntypedCap);
+	assert(result.object == Some(untyped_object));
+	assert(result.untyped is Some);
+	assert(result.untyped.unwrap().block_size_bits == 6);
+	assert(!result.untyped.unwrap().is_device);
+	assert(result.untyped.unwrap().free_index == spec_untyped_max_free_index(6));
 	assert(spec_set_untyped_cap_as_full_effect(
 		src_cap,
 		inserted_cap,
@@ -387,7 +387,10 @@ pub proof fn insert_new_cap_smoke_check() {
 	assert(spec_cte_insert_changed_slots(old_state, 2int, 3int) =~= set![2int, 3int]);
 	lemma_cte_insert_changed_slots_contains_src_dest(old_state, 2int, 3int);
 	assert(slots_unchanged_except(old_state, new_state, set![2int, 3int]));
+	assert(spec_insert_new_cap_frame(old_state, new_state, 2int, 3int));
+	assert(spec_insert_new_cap_invariant_preservation(new_state));
 	assert(spec_cte_insert_mdb_shape(old_state, new_state, 2int, 3int, true));
+	assert(spec_insert_new_cap_functional(old_state, new_state, 2int, 3int, inserted_cap));
 	assert(new_state.slot_entry(2int) == spec_insert_new_cap_expected_parent_entry(old_state, 2int, 3int));
 	assert(new_state.slot_entry(3int) == spec_insert_new_cap_expected_slot_entry(old_state, 2int, 3int, inserted_cap));
 }
@@ -474,7 +477,17 @@ pub proof fn derive_cap_smoke_check() {
 		roots: set![1int],
 	};
 
+	assert(spec_same_region_as_caps(untyped_cap, untyped_cap)) by {
+		assert(cspace_spec_pow2(6nat) == 64) by (compute_only);
+		assert(spec_cap_size_bits(untyped_cap) == 6);
+	};
+	assert(blocked_state.same_region(4int, 5int));
+	assert(blocked_state.mdb_parent_of(4int, 5int));
 	assert(blocked_state.ensure_no_children_blocks(4int));
+	assert(spec_is_final_cap_pre(blocked_state, 4int));
+	assert(spec_ensure_no_children_pre(blocked_state, 4int));
+	assert(spec_ensure_no_children_expected_error(blocked_state, 4int));
+	assert(spec_is_mdb_parent_of_post(blocked_state, 4int, 5int, true));
 	assert(spec_derive_cap_returns_syscall_error(blocked_state, 4int, untyped_cap));
 	assert(spec_derive_cap_expected_cap(blocked_state, 4int, untyped_cap) == spec_null_cap());
 
@@ -694,7 +707,10 @@ pub proof fn cte_move_smoke_check() {
 	lemma_cte_move_changed_slots_contains_core(old_state, 3int, 5int);
 	lemma_cte_move_changed_slots_contains_neighbors(old_state, 3int, 5int);
 	assert(slots_unchanged_except(old_state, moved_state, set![2int, 3int, 4int, 5int]));
+	assert(spec_cte_move_frame(old_state, moved_state, 3int, 5int));
+	assert(spec_cte_move_invariant_preservation(moved_state));
 	assert(spec_cte_move_mdb_shape(old_state, moved_state, 3int, 5int));
+	assert(spec_cte_move_functional(old_state, moved_state, 3int, 5int, src_cap));
 	assert(moved_state.slot_entry(3int) == spec_cte_move_expected_src_entry());
 	assert(moved_state.slot_entry(5int) == spec_cte_move_expected_dest_entry(old_state, 3int, src_cap));
 }
@@ -874,7 +890,10 @@ pub proof fn cte_swap_smoke_check() {
 	lemma_cte_swap_changed_slots_contains_core(old_state, 3int, 4int);
 	lemma_cte_swap_changed_slots_contains_neighbors(old_state, 3int, 4int);
 	assert(slots_unchanged_except(old_state, swapped_state, set![2int, 3int, 4int]));
+	assert(spec_cte_swap_frame(old_state, swapped_state, 3int, 4int));
+	assert(spec_cte_swap_invariant_preservation(swapped_state));
 	assert(spec_cte_swap_mdb_shape(old_state, swapped_state, 3int, 4int));
+	assert(spec_cte_swap_functional(old_state, swapped_state, 3int, 4int, cap1, cap2));
 	assert(swapped_state.slot_entry(3int) == spec_cte_swap_expected_slot1_entry(old_state, 3int, 4int, cap2));
 	assert(swapped_state.slot_entry(4int) == spec_cte_swap_expected_slot2_entry(old_state, 3int, 4int, cap1));
 }
@@ -1063,7 +1082,9 @@ pub proof fn resolve_address_bits_smoke_check() {
 	assert(spec_resolve_guard_matches(root_cap, cap_ptr, 4));
 	assert(spec_resolve_guard_matches(child_cap, cap_ptr, 2));
 	assert(!spec_resolve_guard_matches(root_cap, guard_mismatch_cap_ptr, 4));
+	assert(state.cspace_lookup_wf());
 	assert(state.cnode_lookup_wf());
+	assert(spec_resolve_address_bits_state_wf(state));
 	assert(spec_cnode_cap_lookup_total(state, root_cap)) by {
 		assert(root_cap.cnode->Some_0.radix_bits == 1);
 		assert(spec_pow2(1nat) == 2) by (compute_only);

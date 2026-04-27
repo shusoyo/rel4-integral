@@ -12,7 +12,15 @@ pub open spec fn spec_same_object_if_present(lhs: CapSpec, rhs: CapSpec) -> bool
 }
 
 pub open spec fn spec_same_region_if_present(lhs: CapSpec, rhs: CapSpec) -> bool {
-	(lhs.region_id is Some && rhs.region_id is Some) ==> lhs.region_id == rhs.region_id
+	(lhs.object is Some && rhs.object is Some) ==> spec_same_region_as_caps(lhs, rhs)
+}
+
+pub open spec fn spec_cap_derivable_from(src_cap: CapSpec, new_cap: CapSpec) -> bool {
+	&&& valid_cap(src_cap)
+	&&& valid_cap(new_cap)
+	&&& new_cap.kind != CapKind::NullCap
+	&&& rights_subseteq(new_cap.rights, src_cap.rights)
+	&&& spec_same_region_as_caps(src_cap, new_cap)
 }
 
 pub open spec fn spec_null_cap() -> CapSpec {
@@ -42,17 +50,29 @@ pub open spec fn spec_empty_slot_entry() -> SlotEntrySpec {
 	}
 }
 
+pub open spec fn spec_cspace_primitive_frame(
+	old_state: CSpaceState,
+	new_state: CSpaceState,
+	changed: Set<SlotId>,
+) -> bool {
+	&&& new_state.roots =~= old_state.roots
+	&&& new_state.cnode_slots =~= old_state.cnode_slots
+	&&& new_state.cnode_lookup =~= old_state.cnode_lookup
+	&&& slots_unchanged_except(old_state, new_state, changed)
+}
+
+pub open spec fn spec_cspace_invariant_preservation(new_state: CSpaceState) -> bool {
+	&&& new_state.mdb_state_wf()
+	&&& new_state.cspace_lookup_wf()
+	&&& new_state.cspace_roots_wf()
+}
+
 /// A minimal Stage C notion of "the inserted cap is derivable from the source cap".
 ///
 /// This intentionally stays weaker than a final l4v-style derivation theorem, but is already
 /// strong enough to drive the first round of requires/ensures.
 pub open spec fn spec_cte_insert_derivable(src_cap: CapSpec, new_cap: CapSpec) -> bool {
-	&&& valid_cap(src_cap)
-	&&& valid_cap(new_cap)
-	&&& new_cap.kind != CapKind::NullCap
-	&&& rights_subseteq(new_cap.rights, src_cap.rights)
-	&&& spec_same_object_if_present(src_cap, new_cap)
-	&&& spec_same_region_if_present(src_cap, new_cap)
+	spec_cap_derivable_from(src_cap, new_cap)
 }
 
 pub open spec fn spec_set_untyped_cap_as_full_applies(src_cap: CapSpec, new_cap: CapSpec) -> bool {
@@ -64,11 +84,11 @@ pub open spec fn spec_set_untyped_cap_as_full_applies(src_cap: CapSpec, new_cap:
 	&&& src_cap.untyped is Some
 	&&& new_cap.untyped is Some
 	&&& src_cap.untyped->Some_0.block_size_bits == new_cap.untyped->Some_0.block_size_bits
-	&&& 4 <= src_cap.untyped->Some_0.block_size_bits
+	&&& cspace_min_untyped_bits() <= src_cap.untyped->Some_0.block_size_bits
 }
 
 pub closed spec fn spec_sel4_min_untyped_bits() -> int {
-	4
+	cspace_min_untyped_bits()
 }
 
 pub open spec fn spec_untyped_max_free_index(block_size_bits: int) -> int

@@ -31,6 +31,13 @@ pub ghost struct ResolveAddressBitsResultSpec {
 	pub fault: Option<ResolveAddressBitsFaultSpec>,
 }
 
+#[verifier::ext_equal]
+pub ghost struct ResolveAddressBitsRetCoreSpec {
+	pub status: ResolveAddressBitsStatusSpec,
+	pub slot: Option<SlotId>,
+	pub bits_remaining: int,
+}
+
 pub open spec fn spec_pow2(bits: nat) -> int
 	decreases bits,
 {
@@ -176,6 +183,136 @@ pub open spec fn spec_cspace_lookup_total(state: CSpaceState) -> bool {
 		==> spec_cnode_cap_lookup_total(state, state.slot_cap(slot))
 }
 
+pub open spec fn spec_resolve_address_bits_state_wf(state: CSpaceState) -> bool {
+	&&& state.cspace_lookup_wf()
+	&&& spec_cspace_lookup_total(state)
+}
+
+pub open spec fn refines_resolve_address_bits_ret(
+	concrete_view: ResolveAddressBitsRetCoreSpec,
+	abstract_result: ResolveAddressBitsResultSpec,
+) -> bool {
+	&&& concrete_view.status == abstract_result.status
+	&&& concrete_view.slot == abstract_result.slot
+	&&& concrete_view.bits_remaining == abstract_result.bits_remaining
+	&&& (concrete_view.status == ResolveAddressBitsStatusSpec::Success ==> abstract_result.fault is None)
+	&&& (concrete_view.status == ResolveAddressBitsStatusSpec::LookupFault ==> abstract_result.fault is Some)
+}
+
+pub open spec fn project_resolve_address_bits_result_core(
+	abstract_result: ResolveAddressBitsResultSpec,
+) -> ResolveAddressBitsRetCoreSpec {
+	ResolveAddressBitsRetCoreSpec {
+		status: abstract_result.status,
+		slot: abstract_result.slot,
+		bits_remaining: abstract_result.bits_remaining,
+	}
+}
+
+pub open spec fn resolve_address_bits_fault_core(
+	bits_remaining: int,
+) -> ResolveAddressBitsRetCoreSpec {
+	ResolveAddressBitsRetCoreSpec {
+		status: ResolveAddressBitsStatusSpec::LookupFault,
+		slot: None,
+		bits_remaining,
+	}
+}
+
+pub open spec fn resolve_address_bits_success_core(
+	slot: SlotId,
+	bits_remaining: int,
+) -> ResolveAddressBitsRetCoreSpec {
+	ResolveAddressBitsRetCoreSpec {
+		status: ResolveAddressBitsStatusSpec::Success,
+		slot: Some(slot),
+		bits_remaining,
+	}
+}
+
+pub open spec fn resolve_address_bits_expected_core_from_cap(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+) -> ResolveAddressBitsRetCoreSpec
+	decreases bits,
+{
+	if !(root_cap.kind == CapKind::CNodeCap
+		&& root_cap.cnode is Some
+		&& root_cap.object is Some) {
+		resolve_address_bits_fault_core(bits)
+	} else {
+		let level_bits = spec_cnode_level_bits(root_cap);
+		if !(0 <= cap_ptr
+			&& 0 <= bits
+			&& 0 <= root_cap.cnode->Some_0.radix_bits
+			&& 0 <= root_cap.cnode->Some_0.guard_size
+			&& 0 < level_bits) {
+			resolve_address_bits_fault_core(bits)
+		} else {
+			let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+			if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+				resolve_address_bits_fault_core(bits)
+			} else if level_bits > bits {
+				resolve_address_bits_fault_core(bits)
+			} else if next_slot is Some {
+				let next = next_slot.unwrap();
+				if !state.has_slot(next) {
+					resolve_address_bits_fault_core(bits)
+				} else if bits == level_bits {
+					resolve_address_bits_success_core(next, 0)
+				} else {
+					let remaining = bits - level_bits;
+					let next_cap = state.slot_cap(next);
+					if next_cap.kind == CapKind::CNodeCap {
+						resolve_address_bits_expected_core_from_cap(state, next_cap, cap_ptr, remaining)
+					} else {
+						resolve_address_bits_success_core(next, remaining)
+					}
+				}
+			} else {
+				resolve_address_bits_fault_core(bits)
+			}
+		}
+	}
+}
+
+pub open spec fn resolve_address_bits_core_refines_cap(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+	concrete_view: ResolveAddressBitsRetCoreSpec,
+) -> bool {
+	exists|abstract_result: ResolveAddressBitsResultSpec| #![auto]
+		spec_resolve_address_bits(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			abstract_result,
+		) && refines_resolve_address_bits_ret(concrete_view, abstract_result)
+}
+
+pub proof fn lemma_projected_resolve_address_bits_result_refines(
+	abstract_result: ResolveAddressBitsResultSpec,
+)
+	requires
+		abstract_result.status == ResolveAddressBitsStatusSpec::Success ==> abstract_result.fault is None,
+		abstract_result.status == ResolveAddressBitsStatusSpec::LookupFault ==> abstract_result.fault is Some,
+	ensures
+		refines_resolve_address_bits_ret(
+			project_resolve_address_bits_result_core(abstract_result),
+			abstract_result,
+		),
+{
+	assert(refines_resolve_address_bits_ret(
+		project_resolve_address_bits_result_core(abstract_result),
+		abstract_result,
+	));
+}
+
 /// Structural Stage C contract for `resolve_address_bits`.
 ///
 /// This already matches the l4v/Rust control flow on:
@@ -236,8 +373,7 @@ pub open spec fn spec_resolve_address_bits_pre(
 	cap_ptr: int,
 	bits: int,
 ) -> bool {
-	&&& state.wf()
-	&&& spec_cspace_lookup_total(state)
+	&&& spec_resolve_address_bits_state_wf(state)
 	&&& 0 <= cap_ptr
 	&&& 0 <= bits <= cspace_word_bits()
 	&&& (root_cap.kind == CapKind::CNodeCap ==> {
@@ -487,11 +623,14 @@ pub proof fn lemma_resolve_pre_implies_base_invariants(
 	requires
 		spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
 	ensures
-		state.wf(),
+		spec_resolve_address_bits_state_wf(state),
+		state.cspace_lookup_wf(),
+		state.valid_slots(),
 		spec_cspace_lookup_total(state),
 		state.cnode_lookup_wf(),
 {
-	lemma_wf_implies_core_invariants(state);
+	assert(state.cspace_lookup_wf());
+	assert(state.valid_slots());
 }
 
 pub proof fn lemma_resolve_pre_implies_root_lookup_total(
@@ -921,6 +1060,540 @@ pub proof fn lemma_resolve_address_bits_fault_result_implies_contract(
 {
 	lemma_resolve_address_bits_fault_result_implies_post(state, root_cap, cap_ptr, bits, result);
 	assert(spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result));
+}
+
+pub proof fn lemma_resolve_address_bits_expected_core_refines_cap(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+)
+	requires
+		spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
+		valid_cap(root_cap),
+	ensures
+		resolve_address_bits_core_refines_cap(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits),
+		),
+	decreases bits,
+{
+	let expected = resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits);
+	if !(root_cap.kind == CapKind::CNodeCap
+		&& root_cap.cnode is Some
+		&& root_cap.object is Some) {
+		let abstract_result = ResolveAddressBitsResultSpec {
+			status: ResolveAddressBitsStatusSpec::LookupFault,
+			slot: None,
+			bits_remaining: bits,
+			fault: Some(ResolveAddressBitsFaultSpec::InvalidRoot),
+		};
+		assert(expected == project_resolve_address_bits_result_core(abstract_result));
+		lemma_projected_resolve_address_bits_result_refines(abstract_result);
+		assert(spec_resolve_invalid_root_fault(root_cap, bits, abstract_result));
+		lemma_resolve_invalid_root_fault_implies_fault(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			abstract_result,
+		);
+		lemma_resolve_address_bits_fault_result_implies_contract(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			abstract_result,
+		);
+		assert(resolve_address_bits_core_refines_cap(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			expected,
+		));
+	} else {
+		lemma_resolve_pre_implies_root_lookup_ready(state, root_cap, cap_ptr, bits);
+		let level_bits = spec_cnode_level_bits(root_cap);
+		if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+			let abstract_result = ResolveAddressBitsResultSpec {
+				status: ResolveAddressBitsStatusSpec::LookupFault,
+				slot: None,
+				bits_remaining: bits,
+				fault: Some(ResolveAddressBitsFaultSpec::GuardMismatch {
+					bits_left: bits,
+					guard_found: root_cap.cnode.unwrap().guard,
+					guard_size: root_cap.cnode.unwrap().guard_size,
+				}),
+			};
+			assert(expected == project_resolve_address_bits_result_core(abstract_result));
+			lemma_projected_resolve_address_bits_result_refines(abstract_result);
+			assert(spec_resolve_guard_mismatch_fault(root_cap, cap_ptr, bits, abstract_result));
+			lemma_resolve_guard_mismatch_fault_implies_fault(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				abstract_result,
+			);
+			lemma_resolve_address_bits_fault_result_implies_contract(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				abstract_result,
+			);
+			assert(resolve_address_bits_core_refines_cap(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				expected,
+			));
+		} else if level_bits > bits {
+			let abstract_result = ResolveAddressBitsResultSpec {
+				status: ResolveAddressBitsStatusSpec::LookupFault,
+				slot: None,
+				bits_remaining: bits,
+				fault: Some(ResolveAddressBitsFaultSpec::DepthMismatch {
+					bits_left: bits,
+					bits_found: level_bits,
+				}),
+			};
+			assert(expected == project_resolve_address_bits_result_core(abstract_result));
+			lemma_projected_resolve_address_bits_result_refines(abstract_result);
+			assert(spec_resolve_depth_mismatch_fault(root_cap, bits, abstract_result));
+			lemma_resolve_depth_mismatch_fault_implies_fault(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				abstract_result,
+			);
+			lemma_resolve_address_bits_fault_result_implies_contract(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				abstract_result,
+			);
+			assert(resolve_address_bits_core_refines_cap(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				expected,
+			));
+		} else {
+			let offset = spec_extract_bits(
+				cap_ptr,
+				bits - level_bits,
+				root_cap.cnode->Some_0.radix_bits,
+			);
+			lemma_extract_bits_range(
+				cap_ptr,
+				bits - level_bits,
+				root_cap.cnode->Some_0.radix_bits,
+			);
+			lemma_resolve_known_offset_implies_next_slot_exists(
+				state,
+				root_cap,
+				cap_ptr,
+				bits,
+				offset,
+			);
+			let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+			assert(next_slot is Some);
+			let next = next_slot.unwrap();
+			assert(state.has_slot(next));
+			if bits == level_bits {
+				let abstract_result = ResolveAddressBitsResultSpec {
+					status: ResolveAddressBitsStatusSpec::Success,
+					slot: Some(next),
+					bits_remaining: 0,
+					fault: None,
+				};
+				assert(expected == project_resolve_address_bits_result_core(abstract_result));
+				lemma_projected_resolve_address_bits_result_refines(abstract_result);
+				lemma_resolve_address_bits_exact_success(
+					state,
+					root_cap,
+					cap_ptr,
+					bits,
+					next,
+				);
+				lemma_resolve_address_bits_success_result_implies_contract(
+					state,
+					root_cap,
+					cap_ptr,
+					bits,
+					next,
+					0,
+				);
+				assert(resolve_address_bits_core_refines_cap(
+					state,
+					root_cap,
+					cap_ptr,
+					bits,
+					expected,
+				));
+			} else {
+				let remaining = bits - level_bits;
+				let next_cap = state.slot_cap(next);
+				if next_cap.kind == CapKind::CNodeCap {
+					let child_core = resolve_address_bits_expected_core_from_cap(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+					);
+					lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+					lemma_cspace_lookup_wf_implies_valid_slot_entry(state, next);
+					assert(valid_cap(next_cap));
+					assert(next_cap.cnode is Some);
+					assert(next_cap.object is Some);
+					assert(0 < spec_cnode_level_bits(next_cap));
+					assert(0 <= remaining <= cspace_word_bits());
+					lemma_cspace_lookup_total_implies_cnode_lookup_total(state, next);
+					assert(spec_resolve_address_bits_pre(state, next_cap, cap_ptr, remaining));
+					assert(expected == child_core);
+					lemma_resolve_address_bits_expected_core_refines_cap(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+					);
+					let child_result = choose|child_result: ResolveAddressBitsResultSpec|
+						spec_resolve_address_bits(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+							child_result,
+						) && refines_resolve_address_bits_ret(child_core, child_result);
+					assert(spec_resolve_address_bits(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+						child_result,
+					));
+					assert(refines_resolve_address_bits_ret(child_core, child_result));
+					assert(child_result.status == child_core.status);
+					assert(child_result.slot == child_core.slot);
+					assert(child_result.bits_remaining == child_core.bits_remaining);
+					if child_core.status == ResolveAddressBitsStatusSpec::Success {
+						let slot = child_result.slot.unwrap();
+						let bits_left = child_result.bits_remaining;
+						assert(child_result.fault is None);
+						assert(state.has_slot(slot));
+						assert(spec_resolve_address_bits_success(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+							slot,
+							bits_left,
+						));
+						lemma_resolve_address_bits_recursive_success(
+							state,
+							root_cap,
+							cap_ptr,
+							bits,
+							next,
+							slot,
+							bits_left,
+						);
+						lemma_resolve_address_bits_success_result_implies_contract(
+							state,
+							root_cap,
+							cap_ptr,
+							bits,
+							slot,
+							bits_left,
+						);
+						assert(child_result == ResolveAddressBitsResultSpec {
+							status: ResolveAddressBitsStatusSpec::Success,
+							slot: Some(slot),
+							bits_remaining: bits_left,
+							fault: None,
+						});
+						assert(spec_resolve_address_bits(state, root_cap, cap_ptr, bits, child_result));
+					} else {
+						assert(child_result.status == ResolveAddressBitsStatusSpec::LookupFault);
+						assert(child_result.fault is Some);
+						assert(spec_resolve_address_bits_fault(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+							child_result,
+						));
+						lemma_resolve_address_bits_recursive_fault(
+							state,
+							root_cap,
+							cap_ptr,
+							bits,
+							next,
+							child_result,
+						);
+						lemma_resolve_address_bits_fault_result_implies_contract(
+							state,
+							root_cap,
+							cap_ptr,
+							bits,
+							child_result,
+						);
+					}
+					assert(resolve_address_bits_core_refines_cap(
+						state,
+						root_cap,
+						cap_ptr,
+						bits,
+						expected,
+					));
+				} else {
+					let abstract_result = ResolveAddressBitsResultSpec {
+						status: ResolveAddressBitsStatusSpec::Success,
+						slot: Some(next),
+						bits_remaining: remaining,
+						fault: None,
+					};
+					assert(expected == project_resolve_address_bits_result_core(abstract_result));
+					lemma_projected_resolve_address_bits_result_refines(abstract_result);
+					lemma_resolve_address_bits_early_stop_success(
+						state,
+						root_cap,
+						cap_ptr,
+						bits,
+						next,
+					);
+					lemma_resolve_address_bits_success_result_implies_contract(
+						state,
+						root_cap,
+						cap_ptr,
+						bits,
+						next,
+						remaining,
+					);
+					assert(resolve_address_bits_core_refines_cap(
+						state,
+						root_cap,
+						cap_ptr,
+						bits,
+						expected,
+					));
+				}
+			}
+		}
+	}
+}
+
+pub proof fn lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+	result: ResolveAddressBitsResultSpec,
+)
+	requires
+		0 <= cap_ptr,
+		0 <= bits,
+		valid_cap(root_cap),
+		spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result),
+	ensures
+		project_resolve_address_bits_result_core(result)
+			== resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits),
+	decreases bits,
+{
+	let expected = resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits);
+	assert(spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits));
+	if result.status == ResolveAddressBitsStatusSpec::Success {
+		assert(result.slot is Some);
+		assert(result.fault is None);
+		let slot = result.slot.unwrap();
+		let bits_left = result.bits_remaining;
+		assert(state.has_slot(slot));
+		assert(spec_resolve_address_bits_success(
+			state,
+			root_cap,
+			cap_ptr,
+			bits,
+			slot,
+			bits_left,
+		));
+		if !(root_cap.kind == CapKind::CNodeCap
+			&& root_cap.cnode is Some
+			&& root_cap.object is Some) {
+			assert(false);
+		} else {
+			let level_bits = spec_cnode_level_bits(root_cap);
+			let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+			assert(0 <= root_cap.cnode->Some_0.radix_bits);
+			assert(0 <= root_cap.cnode->Some_0.guard_size);
+			assert(0 < level_bits);
+			assert(spec_resolve_guard_matches(root_cap, cap_ptr, bits));
+			assert(level_bits <= bits);
+			assert(next_slot is Some);
+			let next = next_slot.unwrap();
+			assert(state.has_slot(next));
+			if bits == level_bits {
+				assert(slot == next);
+				assert(bits_left == 0);
+				assert(expected == resolve_address_bits_success_core(next, 0));
+			} else {
+				let remaining = bits - level_bits;
+				let next_cap = state.slot_cap(next);
+				if next_cap.kind == CapKind::CNodeCap {
+					lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+					lemma_cspace_lookup_wf_implies_valid_slot_entry(state, next);
+					assert(valid_cap(next_cap));
+					assert(next_cap.cnode is Some);
+					assert(next_cap.object is Some);
+					assert(0 < spec_cnode_level_bits(next_cap));
+					assert(0 <= remaining <= cspace_word_bits());
+					lemma_cspace_lookup_total_implies_cnode_lookup_total(state, next);
+					lemma_resolve_address_bits_success_implies_bits_left_in_range(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+						slot,
+						bits_left,
+					);
+					assert(spec_resolve_address_bits_pre(state, next_cap, cap_ptr, remaining));
+					lemma_resolve_address_bits_success_result_implies_contract(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+						slot,
+						bits_left,
+					);
+					assert(result == ResolveAddressBitsResultSpec {
+						status: ResolveAddressBitsStatusSpec::Success,
+						slot: Some(slot),
+						bits_remaining: bits_left,
+						fault: None,
+					});
+					assert(spec_resolve_address_bits(state, next_cap, cap_ptr, remaining, result));
+					lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+						result,
+					);
+					assert(expected == resolve_address_bits_expected_core_from_cap(
+						state,
+						next_cap,
+						cap_ptr,
+						remaining,
+					));
+				} else {
+					assert(slot == next);
+					assert(bits_left == remaining);
+					assert(expected == resolve_address_bits_success_core(next, remaining));
+				}
+			}
+		}
+	} else {
+		assert(result.status == ResolveAddressBitsStatusSpec::LookupFault);
+		assert(spec_resolve_address_bits_fault(state, root_cap, cap_ptr, bits, result));
+		if !(root_cap.kind == CapKind::CNodeCap
+			&& root_cap.cnode is Some
+			&& root_cap.object is Some) {
+			assert(expected == resolve_address_bits_fault_core(bits));
+		} else {
+			let level_bits = spec_cnode_level_bits(root_cap);
+			let next_slot = spec_resolve_address_bits_next_slot(state, root_cap, cap_ptr, bits);
+			assert(0 <= root_cap.cnode->Some_0.radix_bits);
+			assert(0 <= root_cap.cnode->Some_0.guard_size);
+			assert(0 < level_bits);
+			if !spec_resolve_guard_matches(root_cap, cap_ptr, bits) {
+				assert(expected == resolve_address_bits_fault_core(bits));
+			} else if level_bits > bits {
+				assert(expected == resolve_address_bits_fault_core(bits));
+			} else {
+				assert(next_slot is Some);
+				let next = next_slot.unwrap();
+				assert(state.has_slot(next));
+				if bits == level_bits {
+					assert(false);
+				} else {
+					let remaining = bits - level_bits;
+					let next_cap = state.slot_cap(next);
+					if next_cap.kind == CapKind::CNodeCap {
+						lemma_resolve_pre_implies_base_invariants(state, root_cap, cap_ptr, bits);
+						lemma_cspace_lookup_wf_implies_valid_slot_entry(state, next);
+						assert(valid_cap(next_cap));
+						assert(next_cap.cnode is Some);
+						assert(next_cap.object is Some);
+						assert(0 < spec_cnode_level_bits(next_cap));
+						assert(0 <= remaining <= cspace_word_bits());
+						lemma_cspace_lookup_total_implies_cnode_lookup_total(state, next);
+						assert(spec_resolve_address_bits_pre(state, next_cap, cap_ptr, remaining));
+						lemma_resolve_address_bits_fault_result_implies_contract(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+							result,
+						);
+						lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+							result,
+						);
+						assert(expected == resolve_address_bits_expected_core_from_cap(
+							state,
+							next_cap,
+							cap_ptr,
+							remaining,
+						));
+					} else {
+						assert(false);
+					}
+				}
+			}
+		}
+	}
+	assert(project_resolve_address_bits_result_core(result) == expected);
+}
+
+pub proof fn lemma_resolve_address_bits_core_refines_cap_implies_expected_core_from_cap(
+	state: CSpaceState,
+	root_cap: CapSpec,
+	cap_ptr: int,
+	bits: int,
+	concrete_view: ResolveAddressBitsRetCoreSpec,
+)
+	requires
+		valid_cap(root_cap),
+		spec_resolve_address_bits_pre(state, root_cap, cap_ptr, bits),
+		resolve_address_bits_core_refines_cap(state, root_cap, cap_ptr, bits, concrete_view),
+	ensures
+		concrete_view == resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits),
+{
+	let result = choose|result: ResolveAddressBitsResultSpec|
+		spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result)
+			&& refines_resolve_address_bits_ret(concrete_view, result);
+	assert(spec_resolve_address_bits(state, root_cap, cap_ptr, bits, result));
+	assert(refines_resolve_address_bits_ret(concrete_view, result));
+	lemma_resolve_address_bits_result_projects_to_expected_core_from_cap(
+		state,
+		root_cap,
+		cap_ptr,
+		bits,
+		result,
+	);
+	assert(concrete_view == project_resolve_address_bits_result_core(result));
+	assert(concrete_view == resolve_address_bits_expected_core_from_cap(state, root_cap, cap_ptr, bits));
 }
 
 }
